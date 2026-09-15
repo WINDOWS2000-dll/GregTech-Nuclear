@@ -1,8 +1,8 @@
 package com.windows2000.gtnuclear.api.modules;
 
-import net.minecraft.util.ResourceLocation;
+import com.windows2000.gtnuclear.api.util.GTNLUtils;
 
-import com.windows2000.gtnuclear.api.util.Utils;
+import net.minecraft.util.ResourceLocation;
 
 public interface IModuleManager {
 
@@ -11,7 +11,7 @@ public interface IModuleManager {
     }
 
     default boolean isModuleEnabled(String moduleID) {
-        return isModuleEnabled(Utils.id(moduleID));
+        return isModuleEnabled(GTNLUtils.gtnlID(moduleID));
     }
 
     boolean isModuleEnabled(ResourceLocation id);

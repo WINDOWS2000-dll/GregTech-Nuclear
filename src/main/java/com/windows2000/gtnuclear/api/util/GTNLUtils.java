@@ -6,11 +6,11 @@ import org.jetbrains.annotations.NotNull;
 
 import com.windows2000.gtnuclear.api.GTNuclearValues;
 
-public class Utils {
+public class GTNLUtils {
 
-    private Utils() {}
+    private GTNLUtils() {}
 
-    public static @NotNull ResourceLocation id(String path) {
+    public static @NotNull ResourceLocation gtnlID(String path) {
         return new ResourceLocation(GTNuclearValues.MODID, path);
     }
 }

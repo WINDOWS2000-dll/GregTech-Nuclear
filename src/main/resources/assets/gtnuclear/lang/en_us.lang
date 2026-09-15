@@ -1,0 +1,4 @@
+# Sample Machine (see com.windows2000.gtnuclear.common.machines)
+gtnuclear.machine.sample_machine.name=Sample Machine
+gtnuclear.machine.sample_machine.tooltip=Turns cobblestone into an iron nugget. Replace me!
+recipemap.sample_machine.name=Sample Machine

@@ -1,5 +1,7 @@
 package com.windows2000.gtnuclear.core;
 
+import com.windows2000.gtnuclear.common.blocks.GTNLMetaBlocks;
+
 import net.minecraftforge.fml.common.SidedProxy;
 import net.minecraftforge.fml.common.event.FMLConstructionEvent;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
@@ -40,6 +42,7 @@ public class CoreModule implements IModule {
     @Override
     public void preInit(FMLPreInitializationEvent event) {
         proxy.preInit(event);
+        GTNLMetaBlocks.init();
 
         logger.info("Hello World!");
     }

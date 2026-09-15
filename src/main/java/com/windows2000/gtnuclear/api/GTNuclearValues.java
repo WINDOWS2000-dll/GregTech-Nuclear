@@ -9,4 +9,9 @@ import com.windows2000.gtnuclear.Tags;
 public class GTNuclearValues {
 
     public static final String MODID = Tags.MODID;
+
+    public static final String MOD_NAME = "GregTech:Nuclear";
+
+    public static final String MOD_NAME_SHORT = "GTNuclear";
+
 }

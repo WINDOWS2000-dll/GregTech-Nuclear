@@ -1,5 +1,7 @@
 package com.windows2000.gtnuclear.client;
 
+import com.windows2000.gtnuclear.common.blocks.GTNLMetaBlocks;
+
 import net.minecraftforge.client.event.ModelRegistryEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
@@ -17,5 +19,7 @@ public class ClientProxy extends CommonProxy {
     }
 
     @SubscribeEvent
-    public static void registerModels(ModelRegistryEvent event) {}
+    public static void registerModels(ModelRegistryEvent event) {
+        GTNLMetaBlocks.registerItemModel();
+    }
 }

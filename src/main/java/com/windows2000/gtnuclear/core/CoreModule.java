@@ -1,7 +1,9 @@
 package com.windows2000.gtnuclear.core;
 
+import com.windows2000.gtnuclear.api.unification.materials.GTNLMaterials;
 import com.windows2000.gtnuclear.common.blocks.GTNLMetaBlocks;
 
+import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.SidedProxy;
 import net.minecraftforge.fml.common.event.FMLConstructionEvent;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
@@ -37,7 +39,13 @@ public class CoreModule implements IModule {
     }
 
     @Override
-    public void construction(FMLConstructionEvent event) {}
+    public void construction(FMLConstructionEvent event) {
+        // Registered here (Construction phase, which precedes PreInit for every mod regardless of dependency
+        // order) rather than via @Mod.EventBusSubscriber, so this mod's Forge event-bus wiring stays visible in
+        // one place. GT's MaterialRegistryEvent/MaterialEvent fire during GT's own PreInit -- required-after:
+        // gregtech only orders same-phase events, so this must already be subscribed before PreInit begins.
+        MinecraftForge.EVENT_BUS.register(GTNLMaterials.class);
+    }
 
     @Override
     public void preInit(FMLPreInitializationEvent event) {

@@ -62,8 +62,13 @@ dependencies {
     api("com.cleanroommc:modularui:3.1.5") { transitive = false }
 
     // GregTech itself -- exactly one of these two branches is used, selected by gtDependencyMode above.
+    // Also added to testCompileOnly/testRuntimeOnly: devOnlyNonPublishable (and compileOnly, which it extends)
+    // aren't inherited by the test source set by default, but our tests (e.g. DecayEngineTest) call into GT's own
+    // API (gregtech.api.unification.*), so the test source set needs the same dev jar on its own classpath.
     if (gtDependencyMode == 'official') {
         devOnlyNonPublishable(rfg.deobf(officialCurseMavenSpec))
+        testCompileOnly(rfg.deobf(officialCurseMavenSpec))
+        testRuntimeOnly(rfg.deobf(officialCurseMavenSpec))
     } else {
         File jar = project.file(forkDevJarPath)
         if (!jar.exists()) {
@@ -74,6 +79,8 @@ dependencies {
                             "gradle.properties to pull GregTechCEu from CurseMaven instead. See README.md.")
         }
         devOnlyNonPublishable(rfg.deobf(project.files(jar)))
+        testCompileOnly(rfg.deobf(project.files(jar)))
+        testRuntimeOnly(rfg.deobf(project.files(jar)))
     }
 
     // Add your own mod's dependencies below this line.

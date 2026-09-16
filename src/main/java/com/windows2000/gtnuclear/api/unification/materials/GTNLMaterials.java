@@ -1,6 +1,7 @@
 package com.windows2000.gtnuclear.api.unification.materials;
 
 import com.windows2000.gtnuclear.api.GTNuclearValues;
+import com.windows2000.gtnuclear.api.unification.materials.reactor.ReactorFluidMaterials;
 import com.windows2000.gtnuclear.api.unification.materials.series.ActiniumSeriesMaterials;
 import com.windows2000.gtnuclear.api.unification.materials.series.NeptuniumSeriesMaterials;
 import com.windows2000.gtnuclear.api.unification.materials.series.ThoriumSeriesMaterials;
@@ -112,6 +113,15 @@ public class GTNLMaterials {
     public static Material Lead209;
     public static Material Bismuth209;
 
+    /*
+     * PWR primary coolant loop, IDs 54-55. See ReactorFluidMaterials: ReactorCoolantWater carries the
+     * REACTOR_COOLANT_WATER FluidAttribute (rejected by every ordinary GT fluid pipe automatically);
+     * ReactorCoolantPipeAlloy is the dedicated high-throughput pipe material that explicitly declares support for
+     * that attribute (and, being gas-proof, also carries ordinary Steam for the secondary loop).
+     */
+    public static Material ReactorCoolantWater;
+    public static Material ReactorCoolantPipeAlloy;
+
     @SubscribeEvent
     public static void onMaterialRegistryEvent(MaterialRegistryEvent event) {
         GregTechAPI.materialManager.createRegistry(GTNuclearValues.MODID);
@@ -123,5 +133,6 @@ public class GTNLMaterials {
         ActiniumSeriesMaterials.register();
         ThoriumSeriesMaterials.register();
         NeptuniumSeriesMaterials.register();
+        ReactorFluidMaterials.register();
     }
 }

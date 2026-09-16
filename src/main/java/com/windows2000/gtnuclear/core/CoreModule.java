@@ -2,6 +2,8 @@ package com.windows2000.gtnuclear.core;
 
 import com.windows2000.gtnuclear.api.unification.materials.GTNLMaterials;
 import com.windows2000.gtnuclear.common.blocks.GTNLMetaBlocks;
+import com.windows2000.gtnuclear.common.metatileentities.GTNLMTERegistryHandler;
+import com.windows2000.gtnuclear.common.metatileentities.GTNLMetaTileEntityRegistration;
 
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.SidedProxy;
@@ -45,12 +47,14 @@ public class CoreModule implements IModule {
         // one place. GT's MaterialRegistryEvent/MaterialEvent fire during GT's own PreInit -- required-after:
         // gregtech only orders same-phase events, so this must already be subscribed before PreInit begins.
         MinecraftForge.EVENT_BUS.register(GTNLMaterials.class);
+        MinecraftForge.EVENT_BUS.register(GTNLMTERegistryHandler.class);
     }
 
     @Override
     public void preInit(FMLPreInitializationEvent event) {
         proxy.preInit(event);
         GTNLMetaBlocks.init();
+        GTNLMetaTileEntityRegistration.register();
 
         logger.info("Hello World!");
     }

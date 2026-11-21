@@ -1,8 +1,8 @@
 package com.windows2000.gtnuclear.api.modules;
 
-import com.windows2000.gtnuclear.api.util.GTNLUtils;
-
 import net.minecraft.util.ResourceLocation;
+
+import com.windows2000.gtnuclear.api.util.GTNLUtils;
 
 public interface IModuleManager {
 

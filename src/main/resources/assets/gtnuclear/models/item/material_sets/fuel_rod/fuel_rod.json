@@ -1,0 +1,6 @@
+{
+  "parent": "item/generated",
+  "textures": {
+    "layer0": "gtnuclear:items/material_sets/fuel_rod/fuel_rod"
+  }
+}

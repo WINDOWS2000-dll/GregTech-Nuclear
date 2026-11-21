@@ -1,87 +1,61 @@
-//file:noinspection DependencyNotationArgument
-// TODO remove when fixed in RFG ^
 /*
- * Add your dependencies here. Supported configurations:
- *  - api("group:name:version:classifier"): if you use the types from this dependency in the public API of this mod
- *       Available at runtime and compiletime for mods depending on this mod
- *  - implementation("g:n:v:c"): if you need this for internal implementation details of the mod, but none of it is visible via the public API
- *       Available at runtime but not compiletime for mods depending on this mod
- *  - compileOnly("g:n:v:c"): if the mod you're building doesn't need this dependency during runtime at all, e.g. for optional mods
- *       Not available at all for mods depending on this mod, only visible at compiletime for this mod
- *  - compileOnlyApi("g:n:v:c"): like compileOnly, but also visible at compiletime for mods depending on this mod
- *       Available at compiletime but not runtime for mods depending on this mod
- *  - runtimeOnlyNonPublishable("g:n:v:c"): if you want to include a mod in this mod's runClient/runServer runs, but not publish it as a dependency
- *       Not available at all for mods depending on this mod, only visible at runtime for this mod
- *  - devOnlyNonPublishable("g:n:v:c"): a combination of runtimeOnlyNonPublishable and compileOnly for dependencies present at both compiletime and runtime,
- *       but not published as Maven dependencies - useful for RFG-deobfuscated dependencies or local testing
- *  - runtimeOnly("g:n:v:c"): if you don't need this at compile time, but want it to be present at runtime
- *       Available at runtime for mods depending on this mod
- *  - annotationProcessor("g:n:v:c"): mostly for java compiler plugins, if you know you need this, use it, otherwise don't worry
- *  - testCONFIG("g:n:v:c") - replace CONFIG by one of the above (except api), same as above but for the test sources instead of main
+ * Add dependencies here, not in build.gradle.
+ * Supported configurations (Unimined):
+ *  - api / implementation / compileOnly / compileOnlyApi / runtimeOnly / annotationProcessor:
+ *       standard Gradle java-library configurations, for dependencies that are already MCP-named
+ *       (dev jars, plain libraries -- no deobfuscation needed)
+ *  - modApi / modImplementation / modCompileOnly / modRuntimeOnly:
+ *       like the above, but for Forge mods whose published jars are SRG-obfuscated (typically
+ *       CurseForge/Modrinth player-facing jars). Unimined remaps them at resolve time.
  *
- *  - shadowImplementation("g:n:v:c"): effectively the same as API, but the dependency is included in your jar under a renamed package name
- *       Requires you to enable usesShadowedDependencies in gradle.properties
- *       For more info, see https://github.com/GTModpackTeam/Buildscripts/blob/master/docs/shadow.md
- *
- * You can exclude transitive dependencies (dependencies of the chosen dependency) by appending { transitive = false } if needed,
- * but use this sparingly as it can break using your mod as another mod's dependency if you're not careful.
- *
- * To depend on obfuscated jars you can use `devOnlyNonPublishable(rfg.deobf("dep:spec:1.2.3"))` to fetch an obfuscated jar from maven,
- * or `devOnlyNonPublishable(rfg.deobf(project.files("libs/my-mod-jar.jar")))` to use a file.
- *
- * To add a mod with CurseMaven, replace '("g:n:v:c")' in the above with 'rfg.deobf("curse.maven:project_slug-project_id:file_id")'
- * Example: devOnlyNonPublishable(rfg.deobf("curse.maven:top-245211:2667280"))
- *
- * For more details, see https://docs.gradle.org/8.4/userguide/java_library_plugin.html#sec:java_library_configurations_graph
+ * CurseMaven coordinates: 'curse.maven:project_slug-project_id:file_id'. Full docs: https://cursemaven.com/
  */
-
-// ---------------------------------------------------------------------------------------------------------------
-// GregTech dependency switch -- see gradle.properties' "gtDependencyMode" and README.md's
-// "GregTech依存の切り替え" section. This is the ONE thing every addon built from this template must configure
-// before it will compile: point "forkDevJarPath" at a GregTech-GTST dev jar you built yourself (there is no
-// public Maven artifact for a fork), or switch gtDependencyMode to "official" to pull GregTechCEu from CurseMaven
-// instead.
-// ---------------------------------------------------------------------------------------------------------------
-String gtDependencyMode = (project.findProperty('gtDependencyMode') ?: 'fork').toString()
-// Copy your GregTech-GTST build's output jar (GregTech-GTST/build/libs/gregtech-*-dev.jar) into this project's
-// own libs/ directory (create it if needed) and update the filename below to match.
-String forkDevJarPath = 'libs/gregtech-1.12.2-2.9.0-1.2.6-GTST-RecipeReworkPR#2755-dev.jar'
-// CurseMaven file ID for the specific GregTechCEu (unofficial) build you want to target when
-// gtDependencyMode = "official". Find the current one at https://www.curseforge.com/minecraft/mc-mods/gregtech-ce-unofficial/files
-String officialCurseMavenSpec = 'curse.maven:gregtech-ce-unofficial-557242:5519022' // CEu 2.8.10, update as needed
-
 dependencies {
-    // Required to compile against GregTech's own public API surface, which references types from these mods
-    // (CraftTweaker/GroovyScript integration hooks, AE2 storage bus integration, CTM connected textures, and
-    // ModularUI's IGuiHolder implemented by gregtech.api.metatileentity.MetaTileEntity).
-    api("codechicken:codechickenlib:3.2.3.358") // CCL 3.2.3.358
-    api("com.cleanroommc:groovyscript:1.2.0") { transitive = false } // GrS 1.2.0
-    api("CraftTweaker2:CraftTweaker2-MC1120-Main:1.12-4.1.20.700") // CrT 4.1.20.700
-    api rfg.deobf("curse.maven:ae2-extended-life-570458:6302098")
-    api rfg.deobf("curse.maven:ctm-267602:2915363") // CTM 1.0.2.31
-    api("com.cleanroommc:modularui:3.1.5") { transitive = false }
 
-    // GregTech itself -- exactly one of these two branches is used, selected by gtDependencyMode above.
-    // Also added to testCompileOnly/testRuntimeOnly: devOnlyNonPublishable (and compileOnly, which it extends)
-    // aren't inherited by the test source set by default, but our tests (e.g. DecayEngineTest) call into GT's own
-    // API (gregtech.api.unification.*), so the test source set needs the same dev jar on its own classpath.
-    if (gtDependencyMode == 'official') {
-        devOnlyNonPublishable(rfg.deobf(officialCurseMavenSpec))
-        testCompileOnly(rfg.deobf(officialCurseMavenSpec))
-        testRuntimeOnly(rfg.deobf(officialCurseMavenSpec))
-    } else {
-        File jar = project.file(forkDevJarPath)
-        if (!jar.exists()) {
-            throw new GradleException(
-                    "gtDependencyMode is 'fork' but '${forkDevJarPath}' does not exist. Build GregTech-GTST " +
-                            "first, copy its build/libs/gregtech-*-dev.jar here (or update forkDevJarPath in " +
-                            "dependencies.gradle to point at it), or set gtDependencyMode=official in " +
-                            "gradle.properties to pull GregTechCEu from CurseMaven instead. See README.md.")
-        }
-        devOnlyNonPublishable(rfg.deobf(project.files(jar)))
-        testCompileOnly(rfg.deobf(project.files(jar)))
-        testRuntimeOnly(rfg.deobf(project.files(jar)))
-    }
+    // Required to compile against GregTech's own public API surface, which references types from these
+    // mods (CraftTweaker/GroovyScript integration hooks, AE2 storage bus integration, CTM connected
+    // textures, and ModularUI's IGuiHolder implemented by gregtech.api.metatileentity.MetaTileEntity).
+    // Versions/coordinates are kept identical to GregTech-GTST's own dependencies.gradle -- using a
+    // different fork/version of any of these than the GregTech-GTST dev jar this project compiles
+    // against would risk two incompatible copies colliding on the runtime classpath.
+    modApi("curse.maven:codechicken-lib-cre-1328922:8553938")
+    modApi("com.cleanroommc:modularui:3.1.5") { transitive = false }
+    modApi("com.cleanroommc:groovyscript:1.4.3") { transitive = false }
+    compileOnly("CraftTweaker2:CraftTweaker2-MC1120-Main:1.12-4.1.20.700")
+    modApi("appeng:ae2-uel:v0.56.7") { transitive = false }
+    modApi("curse.maven:ctm-267602:2915363") // CTM 1.0.2.31
+    modApi("curse.maven:had-enough-items-557549:8934963")
+    modApi("curse.maven:the-one-probe-community-edition-885670:8896757")
+
+    // GregTech-GTST itself -- see build.gradle's own flatDir repository comment. Copy
+    // GregTech-GTST/build/libs/gregtech-*-dev.jar into this project's libs/ directory (create it if
+    // needed) whenever GregTech-GTST is rebuilt, and update the version string below to match. modApi
+    // (not modCompileOnly): this addon's own public API types
+    // reference GregTech's types directly, and GregTech must actually be present at runtime (runClient)
+    // for this addon's hard "required-after:gregtech" @Mod dependency to resolve at all -- a real
+    // playtest confirmed modCompileOnly alone produces MissingModsException at startup, since compileOnly-
+    // family configurations are never added to the runtime classpath. The test source set inherits this
+    // automatically via build.gradle's own sourceSets.test { compileClasspath/runtimeClasspath += ...
+    // sourceSets.main.compileClasspath/runtimeClasspath } wiring, so no separate test-scoped declaration
+    // is needed here.
+    modApi("gregtech:gregtech:1.12.2-2.9.0-1.3.8-GTST-CleanroomMC:dev")
+
+    // Dev-environment-only fix (2026-10): runClient crashed on world exit with
+    // NoClassDefFoundError: javax/xml/bind/DatatypeConverter, thrown from AE2 Unofficial Extended Life's
+    // GridStorage#getValue on server stop. javax.xml.bind (JAXB) was part of Java SE through 8 but removed
+    // from the JDK entirely starting Java 11/17/21/25 -- any 1.12.2-era mod calling it directly breaks once
+    // actually run on this project's Java 25 toolchain. Confirmed NOT an issue in CleanroomMC's own
+    // official distribution (a real external playtest, 2026-10-10, hit no such crash there) -- Cleanroom's
+    // own build.gradle bundles JAXB too, but under the newer jakarta.xml.bind namespace
+    // (jakarta.xml.bind:jakarta.xml.bind-api:4.0.5 + org.glassfish.jaxb:jaxb-runtime/jaxb-core:4.0.9), which
+    // does not satisfy AE2's own hardcoded javax.xml.bind.DatatypeConverter class reference (a different
+    // fully-qualified class name, not just a repackaging) -- Cleanroom's actual end-user distribution
+    // apparently carries additional legacy-javax-namespaced libraries beyond what this source repo's own
+    // build.gradle shows. Pulling in the final javax-namespaced JAXB release directly here is the standard,
+    // well-documented fix for this exact "Java 8->11+ migration" class of error, and only affects this
+    // project's own runClient/test runtime classpath -- no GTST or GregTech-Nuclear code is touched.
+    runtimeOnly("javax.xml.bind:jaxb-api:2.3.1")
+    runtimeOnly("org.glassfish.jaxb:jaxb-runtime:2.3.3")
 
     // Add your own mod's dependencies below this line.
 }

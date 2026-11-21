@@ -1,0 +1,11 @@
+{
+  "forge_marker": 1,
+  "variants": {
+    "variant=pwr_fuel_rod_housing": {
+      "model": "minecraft:cube_all",
+      "textures": {
+        "all": "gregtech:blocks/casings/solid/machine_casing_clean_stainless_steel"
+      }
+    }
+  }
+}

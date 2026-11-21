@@ -1,0 +1,41 @@
+{
+  "forge_marker": 1,
+  "variants": {
+    "variant=heat_exchanger_shell_casing": {
+      "model": "minecraft:cube_all",
+      "textures": {
+        "all": "gtnuclear:blocks/casing/heat_exchanger/heat_exchanger_shell_casing"
+      }
+    },
+    "variant=heat_exchanger_shroud_casing": {
+      "model": "minecraft:cube_all",
+      "textures": {
+        "all": "gtnuclear:blocks/casing/heat_exchanger/heat_exchanger_shroud_casing"
+      }
+    },
+    "variant=heat_exchanger_swirl_separator": {
+      "model": "minecraft:cube_all",
+      "textures": {
+        "all": "gtnuclear:blocks/casing/heat_exchanger/heat_exchanger_swirl_separator"
+      }
+    },
+    "variant=heat_exchanger_tube_casing": {
+      "model": "minecraft:cube_all",
+      "textures": {
+        "all": "gtnuclear:blocks/casing/heat_exchanger/heat_exchanger_tube_casing"
+      }
+    },
+    "variant=heat_exchanger_tube_sheet_casing": {
+      "model": "minecraft:cube_all",
+      "textures": {
+        "all": "gtnuclear:blocks/casing/heat_exchanger/heat_exchanger_tube_sheet_casing"
+      }
+    },
+    "variant=heat_exchanger_baffle_casing": {
+      "model": "minecraft:cube_all",
+      "textures": {
+        "all": "gtnuclear:blocks/casing/heat_exchanger/heat_exchanger_baffle_casing"
+      }
+    }
+  }
+}

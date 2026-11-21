@@ -2,3 +2,69 @@
 gtnuclear.machine.sample_machine.name=Sample Machine
 gtnuclear.machine.sample_machine.tooltip=Turns cobblestone into an iron nugget. Replace me!
 recipemap.sample_machine.name=Sample Machine
+
+# Fluid attributes (see com.windows2000.gtnuclear.api.fluids.attribute.GTNLFluidAttributes)
+gtnuclear.fluid.type_reactor_coolant.tooltip=Reactor Coolant
+gtnuclear.fluid_pipe.reactor_coolant_proof=Can transport reactor coolant
+gtnuclear.fluid.type_radioactive_wastewater.tooltip=Radioactive Wastewater
+gtnuclear.fluid_pipe.radioactive_wastewater_proof=Can transport radioactive wastewater
+
+# Pressurized Water Reactor (see com.windows2000.gtnuclear.common.metatileentities.multi.MetaTileEntityPressurizedWaterReactor)
+gtnuclear.multiblock.pressurized_water_reactor.housing_mismatch=A fuel or control rod channel is not uniformly lined with its matching housing block
+
+# Control Console commands (see com.windows2000.gtnuclear.common.metatileentities.multi.MetaTileEntityControlConsole)
+gtnuclear.gui.control_console.startup=Startup
+gtnuclear.gui.control_console.shutdown=Shutdown
+gtnuclear.gui.control_console.reset=Reset
+gtnuclear.gui.control_console.scram=SCRAM
+gtnuclear.gui.control_console.coolant_injection=Coolant Inject
+gtnuclear.gui.control_console.pressurize=Pressurize
+gtnuclear.gui.control_console.depressurize=Depressurize
+gtnuclear.gui.control_console.boron_dilution=Boron Dilute
+gtnuclear.gui.control_console.boron_concentration=Boron Conc.
+gtnuclear.gui.control_console.auto_control=Auto Control
+
+# MetaTileEntity names (see com.windows2000.gtnuclear.common.metatileentities.GTNLMetaTileEntityRegistration)
+gtnuclear.machine.isotope_storage.name=Isotope Storage
+gtnuclear.machine.pressurized_water_reactor.name=Pressurized Water Reactor
+gtnuclear.machine.reactor_coolant_import_hatch.name=Reactor Coolant Import Hatch
+gtnuclear.machine.reactor_coolant_export_hatch.name=Reactor Coolant Export Hatch
+gtnuclear.machine.boric_acid_import_hatch.name=Boric Acid Import Hatch
+gtnuclear.machine.pure_water_import_hatch.name=Pure Water Import Hatch
+gtnuclear.machine.emergency_coolant_import_hatch.name=Emergency Coolant Import Hatch
+gtnuclear.machine.radioactive_wastewater_export_hatch.name=Radioactive Wastewater Export Hatch
+gtnuclear.machine.fuel_port_hatch.name=Fuel Port
+gtnuclear.machine.control_rod_controller_hatch.name=Control Rod Controller
+gtnuclear.machine.reactor_link_transmitter_hatch.name=Reactor Link Transmitter Hatch
+gtnuclear.machine.reactor_link_receiver_hatch.name=Reactor Link Receiver Hatch
+gtnuclear.machine.console_screen.name=Console Screen
+gtnuclear.machine.control_console.name=Control Console
+gtnuclear.machine.neutron_source_hatch.name=Neutron Source Hatch
+gtnuclear.machine.feedwater_import_hatch.name=Feedwater Import Hatch
+gtnuclear.machine.high_pressure_steam_export_hatch.name=High Pressure Steam Export Hatch
+gtnuclear.machine.heat_exchanger.name=Heat Exchanger
+gtnuclear.machine.advanced_reactor_coolant_import_hatch.name=Advanced Reactor Coolant Import Hatch
+gtnuclear.machine.advanced_reactor_coolant_export_hatch.name=Advanced Reactor Coolant Export Hatch
+gtnuclear.machine.high_pressure_steam_import_hatch.name=High Pressure Steam Import Hatch
+gtnuclear.machine.low_pressure_steam_export_hatch.name=Low Pressure Steam Export Hatch
+gtnuclear.machine.low_pressure_steam_import_hatch.name=Low Pressure Steam Import Hatch
+gtnuclear.machine.condensate_export_hatch.name=Condensate Export Hatch
+gtnuclear.machine.turbine_rotor_holder.name=Turbine Rotor Holder
+gtnuclear.machine.high_pressure_steam_turbine.name=High Pressure Steam Turbine
+gtnuclear.machine.low_pressure_steam_turbine.name=Low Pressure Steam Turbine
+
+# Fuel/control rod items (see com.windows2000.gtnuclear.common.item.GTNLItems)
+item.gtnuclear.fuel_rod.natural_uranium.name=Natural Uranium Fuel Rod
+item.gtnuclear.fuel_rod.leu.name=LEU Fuel Rod
+item.gtnuclear.fuel_rod.haleu.name=HALEU Fuel Rod
+item.gtnuclear.fuel_rod.heu.name=HEU Fuel Rod
+item.gtnuclear.control_rod.standard.name=Control Rod
+item.gtnuclear.control_rod.high_value.name=High-Value Control Rod
+item.gtnuclear.broken_control_rod.name=Broken Control Rod
+gtnuclear.fuel_rod.tooltip.remaining=Fissile Capability Remaining: %s%%
+gtnuclear.fuel_rod.tooltip.replacement_recommended=Replacement Recommended
+gtnuclear.multiblock.heat_exchanger.primary_coolant=Primary Coolant: %s K, %s kg
+gtnuclear.multiblock.heat_exchanger.secondary_water=Secondary Water: %s K, %s kg
+gtnuclear.multiblock.heat_exchanger.heat_transfer=Heat Transfer: %s MW
+gtnuclear.multiblock.heat_exchanger.steam_output=Steam Output: %s mB/t
+item.gtnuclear.neutron_source_rod.californium_252.name=Californium-252 Neutron Source Rod

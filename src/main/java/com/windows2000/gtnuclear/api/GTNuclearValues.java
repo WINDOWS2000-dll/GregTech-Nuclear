@@ -13,5 +13,4 @@ public class GTNuclearValues {
     public static final String MOD_NAME = "GregTech:Nuclear";
 
     public static final String MOD_NAME_SHORT = "GTNuclear";
-
 }

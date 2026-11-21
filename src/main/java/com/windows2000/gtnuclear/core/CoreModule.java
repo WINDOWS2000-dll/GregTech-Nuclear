@@ -1,25 +1,25 @@
 package com.windows2000.gtnuclear.core;
 
-import com.windows2000.gtnuclear.api.unification.materials.GTNLMaterials;
-import com.windows2000.gtnuclear.common.blocks.GTNLMetaBlocks;
-import com.windows2000.gtnuclear.common.metatileentities.GTNLMTERegistryHandler;
-import com.windows2000.gtnuclear.common.metatileentities.GTNLMetaTileEntityRegistration;
-
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.SidedProxy;
 import net.minecraftforge.fml.common.event.FMLConstructionEvent;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
 
+import com.windows2000.gtnuclear.Tags;
+import com.windows2000.gtnuclear.api.GTNuclearValues;
+import com.windows2000.gtnuclear.api.capability.GTNLCapabilities;
+import com.windows2000.gtnuclear.api.modules.GTNuclearModule;
+import com.windows2000.gtnuclear.api.modules.IModule;
+import com.windows2000.gtnuclear.api.unification.materials.GTNLMaterials;
+import com.windows2000.gtnuclear.common.CommonProxy;
+import com.windows2000.gtnuclear.common.blocks.GTNLMetaBlocks;
+import com.windows2000.gtnuclear.common.item.GTNLItems;
+import com.windows2000.gtnuclear.common.metatileentities.GTNLMTERegistryHandler;
+import com.windows2000.gtnuclear.common.metatileentities.GTNLMetaTileEntityRegistration;
+import com.windows2000.gtnuclear.modules.Modules;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.NotNull;
-
-import com.windows2000.gtnuclear.Tags;
-import com.windows2000.gtnuclear.api.GTNuclearValues;
-import com.windows2000.gtnuclear.api.modules.GTNuclearModule;
-import com.windows2000.gtnuclear.api.modules.IModule;
-import com.windows2000.gtnuclear.common.CommonProxy;
-import com.windows2000.gtnuclear.modules.Modules;
 
 @GTNuclearModule(
                  moduleID = Modules.MODULE_CORE,
@@ -53,7 +53,9 @@ public class CoreModule implements IModule {
     @Override
     public void preInit(FMLPreInitializationEvent event) {
         proxy.preInit(event);
+        GTNLCapabilities.init();
         GTNLMetaBlocks.init();
+        GTNLItems.init();
         GTNLMetaTileEntityRegistration.register();
 
         logger.info("Hello World!");

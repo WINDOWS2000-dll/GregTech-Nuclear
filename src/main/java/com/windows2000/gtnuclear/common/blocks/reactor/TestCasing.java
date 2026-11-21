@@ -46,7 +46,5 @@ public class TestCasing extends VariantBlock<TestCasing.CasingType> {
         public @NotNull String getName() {
             return this.name;
         }
-
     }
-
 }

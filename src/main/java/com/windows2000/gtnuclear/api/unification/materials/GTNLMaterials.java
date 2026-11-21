@@ -1,34 +1,23 @@
 package com.windows2000.gtnuclear.api.unification.materials;
 
-import com.windows2000.gtnuclear.api.GTNuclearValues;
-import com.windows2000.gtnuclear.api.unification.materials.reactor.ReactorFluidMaterials;
-import com.windows2000.gtnuclear.api.unification.materials.series.ActiniumSeriesMaterials;
-import com.windows2000.gtnuclear.api.unification.materials.series.NeptuniumSeriesMaterials;
-import com.windows2000.gtnuclear.api.unification.materials.series.ThoriumSeriesMaterials;
-import com.windows2000.gtnuclear.api.unification.materials.series.UraniumSeriesMaterials;
-
 import gregtech.api.GregTechAPI;
 import gregtech.api.unification.material.Material;
 import gregtech.api.unification.material.event.MaterialEvent;
 import gregtech.api.unification.material.event.MaterialRegistryEvent;
 
+import net.minecraftforge.fluids.Fluid;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 
-/**
- * Material field declarations for this mod, mirroring {@code gregtech.api.unification.material.Materials}: fields
- * live here, actual construction is delegated to one {@code register()} call per decay series/category (see
- * {@code api.unification.materials.series}), also mirroring {@code ElementMaterials}/{@code FirstDegreeMaterials}
- * etc.
- * <p>
- * Registration is driven by GT's own {@link MaterialRegistryEvent}/{@link MaterialEvent}, <b>not</b> this mod's own
- * {@link com.windows2000.gtnuclear.api.modules.IModule} lifecycle -- both events fire during GT's own preInit
- * (before this mod's preInit even starts, since {@code required-after:gregtech} only orders same-phase lifecycle
- * events against each other), and GT's material registries are frozen before that finishes. This class is
- * <b>not</b> {@code @Mod.EventBusSubscriber}-annotated; {@code CoreModule#construction} registers it to the Forge
- * event bus explicitly instead (during the even-earlier Construction phase, which precedes preInit for every mod
- * regardless of dependency order), so all of this mod's event-bus wiring stays visible in one place rather than
- * scattered across annotations.
- */
+import com.windows2000.gtnuclear.api.GTNuclearValues;
+import com.windows2000.gtnuclear.api.nuclear.thermal.ReactorCoolantTemperatureBands;
+import com.windows2000.gtnuclear.api.unification.materials.reactor.ReactorFluidMaterials;
+import com.windows2000.gtnuclear.api.unification.materials.series.ActiniumSeriesMaterials;
+import com.windows2000.gtnuclear.api.unification.materials.series.NeptuniumSeriesMaterials;
+import com.windows2000.gtnuclear.api.unification.materials.series.NeutronSourceMaterials;
+import com.windows2000.gtnuclear.api.unification.materials.series.ReactorBurnupProductMaterials;
+import com.windows2000.gtnuclear.api.unification.materials.series.ThoriumSeriesMaterials;
+import com.windows2000.gtnuclear.api.unification.materials.series.UraniumSeriesMaterials;
+
 public class GTNLMaterials {
 
     private GTNLMaterials() {}
@@ -122,6 +111,66 @@ public class GTNLMaterials {
     public static Material ReactorCoolantWater;
     public static Material ReactorCoolantPipeAlloy;
 
+    /*
+     * Boron reactivity control fluids, IDs 56-57. See ReactorFluidMaterials. BoricAcidSolution is an ordinary GT
+     * fluid (no dedicated pipe/attribute -- see this mod's design memory for why only coolant/wastewater needed
+     * one). RadioactiveWastewater carries the RADIOACTIVE_WASTEWATER FluidAttribute and reuses
+     * ReactorCoolantPipeAlloy as its dedicated pipe, for the same "ordinary pipes must reject this" reason as the
+     * primary coolant itself.
+     */
+    public static Material BoricAcidSolution;
+    public static Material RadioactiveWastewater;
+
+    /*
+     * Reactor burnup products (non-fissile neutron-capture terminal poisons), IDs 58-59. See
+     * ReactorBurnupProductMaterials: Uranium236 (from U-235 capture-without-fission) and Plutonium240 (from
+     * Pu-239 capture-without-fission), both with real half-life/decay data in addition to burnup-relevant
+     * neutron cross-sections.
+     */
+    public static Material Uranium236;
+    public static Material Plutonium240;
+
+    /*
+     * Startup neutron source isotopes, IDs 60-61. See NeutronSourceMaterials: Californium252 (real spontaneous-
+     * fission startup source material, used by the dedicated neutron source hatch item) and Curium248 (its alpha-
+     * decay daughter, modeled as stable -- see GTNLElements' own comment on that choice).
+     */
+    public static Material Californium252;
+    public static Material Curium248;
+
+    /**
+     * Secondary loop steam output, ID 62. See ReactorFluidMaterials: produced by the heat exchanger's own
+     * secondary-side boiling calculation, exported through the HIGH_PRESSURE_STEAM_EXPORT hatch -- a new fluid
+     * rather than GTST's own Materials.Steam, per this mod's design memory (2026-09-22).
+     */
+    public static Material HighPressureSteam;
+
+    /**
+     * High-pressure turbine exhaust / low-pressure turbine inlet, ID 143. See {@code ReactorFluidMaterials} for
+     * why 480K anchors the HP/LP turbine thermal-efficiency split.
+     */
+    public static Material LowPressureSteam;
+
+    /**
+     * Discrete primary coolant temperature bands, IDs 63-142 (81 bands, 5K spacing -- band 0 reuses the existing
+     * {@link #ReactorCoolantWater} at ID54, preserving whatever recipe/source already produces it). See
+     * {@link ReactorCoolantTemperatureBands}'s own JavaDoc for why this replaces a single continuously-tagged
+     * fluid, and for why 5K spacing specifically. Indices correspond 1:1 with
+     * {@link ReactorCoolantTemperatureBands#BAND_TEMPERATURES_KELVIN}.
+     */
+    public static Material[] ReactorCoolantWaterBands;
+
+    /**
+     * @return the registered coolant band fluid whose temperature is closest to {@code temperatureKelvin} -- see
+     *         {@link ReactorCoolantTemperatureBands}'s own JavaDoc. The Forge-dependent glue around that class's
+     *         pure {@code nearestBandIndex}.
+     */
+    public static Fluid nearestReactorCoolantBandFluid(double temperatureKelvin) {
+        int index = ReactorCoolantTemperatureBands.nearestBandIndex(
+                ReactorCoolantTemperatureBands.BAND_TEMPERATURES_KELVIN, temperatureKelvin);
+        return ReactorCoolantWaterBands[index].getFluid();
+    }
+
     @SubscribeEvent
     public static void onMaterialRegistryEvent(MaterialRegistryEvent event) {
         GregTechAPI.materialManager.createRegistry(GTNuclearValues.MODID);
@@ -133,6 +182,8 @@ public class GTNLMaterials {
         ActiniumSeriesMaterials.register();
         ThoriumSeriesMaterials.register();
         NeptuniumSeriesMaterials.register();
+        ReactorBurnupProductMaterials.register();
+        NeutronSourceMaterials.register();
         ReactorFluidMaterials.register();
     }
 }

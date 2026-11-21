@@ -1,9 +1,5 @@
 package com.windows2000.gtnuclear.modules;
 
-import java.io.File;
-import java.util.*;
-import java.util.stream.Collectors;
-
 import net.minecraft.block.Block;
 import net.minecraft.item.Item;
 import net.minecraft.item.crafting.IRecipe;
@@ -16,13 +12,16 @@ import net.minecraftforge.fml.common.Loader;
 import net.minecraftforge.fml.common.discovery.ASMDataTable;
 import net.minecraftforge.fml.common.event.*;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.windows2000.gtnuclear.api.GTNuclearValues;
 import com.windows2000.gtnuclear.api.modules.*;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import java.io.File;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Discovers every {@link IModuleContainer} (annotated with {@link ModuleContainer}, or registered manually via

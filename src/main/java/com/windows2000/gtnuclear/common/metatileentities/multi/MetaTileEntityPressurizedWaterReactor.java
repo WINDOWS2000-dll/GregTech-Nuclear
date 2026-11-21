@@ -1,0 +1,2497 @@
+package com.windows2000.gtnuclear.common.metatileentities.multi;
+
+import gregtech.api.capability.IEnergyContainer;
+import gregtech.api.capability.impl.EnergyContainerList;
+import gregtech.api.metatileentity.MetaTileEntity;
+import gregtech.api.metatileentity.interfaces.IGregTechTileEntity;
+import gregtech.api.metatileentity.multiblock.IMultiblockPart;
+import gregtech.api.metatileentity.multiblock.MultiblockAbility;
+import gregtech.api.metatileentity.multiblock.MultiblockWithDisplayBase;
+import gregtech.api.metatileentity.multiblock.ui.MultiblockUIBuilder;
+import gregtech.api.pattern.BlockPattern;
+import gregtech.api.pattern.FactoryBlockPattern;
+import gregtech.api.pattern.PatternMatchContext;
+import gregtech.api.unification.Element;
+import gregtech.api.unification.Elements;
+import gregtech.api.util.KeyUtil;
+import gregtech.api.util.RelativeDirection;
+import gregtech.client.renderer.ICubeRenderer;
+
+import net.minecraft.block.Block;
+import net.minecraft.block.state.IBlockState;
+import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagDouble;
+import net.minecraft.nbt.NBTTagList;
+import net.minecraft.network.PacketBuffer;
+import net.minecraft.util.EnumFacing;
+import net.minecraft.util.ResourceLocation;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.text.TextFormatting;
+import net.minecraftforge.common.util.Constants;
+import net.minecraftforge.fluids.Fluid;
+import net.minecraftforge.fluids.FluidStack;
+import net.minecraftforge.fluids.IFluidTank;
+import net.minecraftforge.fml.relauncher.Side;
+import net.minecraftforge.fml.relauncher.SideOnly;
+
+import codechicken.lib.render.CCRenderState;
+import codechicken.lib.render.pipeline.IVertexOperation;
+import codechicken.lib.vec.Matrix4;
+import com.windows2000.gtnuclear.api.capability.IReactorLinkHatch;
+import com.windows2000.gtnuclear.api.metatileentity.multiblock.GTNLMultiblockAbility;
+import com.windows2000.gtnuclear.api.nuclear.accident.AccidentHost;
+import com.windows2000.gtnuclear.api.nuclear.accident.SevereAccidentConstants;
+import com.windows2000.gtnuclear.api.nuclear.accident.SevereAccidentProgressionTracker;
+import com.windows2000.gtnuclear.api.nuclear.accident.SevereAccidentStage;
+import com.windows2000.gtnuclear.api.nuclear.accident.SevereAccidentState;
+import com.windows2000.gtnuclear.api.nuclear.decay.DecayEngine;
+import com.windows2000.gtnuclear.api.nuclear.fuel.FuelBurnupEngine;
+import com.windows2000.gtnuclear.api.nuclear.fuel.FuelComposition;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.BoronReactivity;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.CMFDResult;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.CMFDSolver;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.ControlRodWorth;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.FluxWeightedAverage;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.ModeratorTemperatureReactivity;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.NodePosition;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.PointKineticsConstants;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.PointKineticsSolver;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.PointKineticsState;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.ReactorGeometry;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.ReactorGeometryBuilder;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.ReactorNode;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.ReactorNodeFactory;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.XenonDeadTimeCalibration;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.XenonIodineConstants;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.XenonIodineSolver;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.XenonIodineState;
+import com.windows2000.gtnuclear.api.nuclear.operation.AutoControlHost;
+import com.windows2000.gtnuclear.api.nuclear.operation.ReactorAutoControlSequencer;
+import com.windows2000.gtnuclear.api.nuclear.operation.ReactorOperatingEvaluator;
+import com.windows2000.gtnuclear.api.nuclear.operation.ReactorOperatingStage;
+import com.windows2000.gtnuclear.api.nuclear.operation.ReactorOperatingState;
+import com.windows2000.gtnuclear.api.nuclear.operation.ReactorScramEvaluator;
+import com.windows2000.gtnuclear.api.nuclear.operation.ScramHost;
+import com.windows2000.gtnuclear.api.nuclear.operation.ScramReason;
+import com.windows2000.gtnuclear.api.nuclear.power.ReactorPowerConsumption;
+import com.windows2000.gtnuclear.api.nuclear.thermal.CoolantThermalSolver;
+import com.windows2000.gtnuclear.api.nuclear.thermal.FuelCoolantSubstepping;
+import com.windows2000.gtnuclear.api.nuclear.thermal.FuelTemperatureStep;
+import com.windows2000.gtnuclear.api.nuclear.thermal.FuelThermalConstants;
+import com.windows2000.gtnuclear.api.nuclear.thermal.RatedCoolantMass;
+import com.windows2000.gtnuclear.api.nuclear.thermal.SteamProperties;
+import com.windows2000.gtnuclear.api.nuclear.thermal.WaterSaturationCurve;
+import com.windows2000.gtnuclear.api.unification.materials.GTNLElements;
+import com.windows2000.gtnuclear.api.unification.materials.GTNLMaterials;
+import com.windows2000.gtnuclear.client.renderer.texture.GTNLTextures;
+import com.windows2000.gtnuclear.common.ConfigHolder;
+import com.windows2000.gtnuclear.common.blocks.GTNLMetaBlocks;
+import com.windows2000.gtnuclear.common.blocks.reactor.ReactorVesselCasing;
+import com.windows2000.gtnuclear.common.item.ItemFuelRod;
+import com.windows2000.gtnuclear.common.item.ItemNeutronSourceRod;
+import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityControlRodController;
+import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityFuelPort;
+import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityNeutronSourceHatch;
+import com.windows2000.gtnuclear.common.util.ReactorTelemetryLogger;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * A pressurized water reactor's cylindrical vessel multiblock: a circular (grid-rasterized) cross-section of
+ * variable diameter (7-31, odd) and height (up to 37 total), with the controller fixed on the front face's
+ * horizontal center at the 3rd layer from the bottom (see this mod's design memory for why -- a deliberate,
+ * fixed placement rather than a fully free-form scan like {@code MetaTileEntityCleanroom}'s).
+ * <p>
+ * <b>Layer layout (bottom to top):</b>
+ * <ol>
+ * <li>Solid bottom cap.</li>
+ * <li>Ring layer with the primary coolant <b>import</b> port ('I', left face center), <b>maintenance
+ * hatch</b> ('M', front face center -- directly below the controller), <b>energy hatch</b> ('E', back
+ * face center) and the <b>radioactive wastewater drain hatch</b> ('D', right face center, used when
+ * adjusting primary coolant volume) -- the fixed "2nd layer from the bottom."</li>
+ * <li>Ring layer with the <b>controller</b> ('S', front face horizontal center), the <b>control console
+ * link hatch</b> ('L', immediately to the controller's right, same row), and the <b>startup neutron
+ * source hatch</b> ('N', immediately to the controller's left, same row) -- this is the fixed "3rd layer
+ * from the bottom."</li>
+ * <li>Zero or more plain ring layers.</li>
+ * <li>Ring layer with the <b>distilled/pure water injection hatch</b> ('P', back face center) -- positioned
+ * as close to the true vertical center of the whole structure as the flexible layer budget allows (see
+ * {@link #createStructurePattern()} for the exact split).</li>
+ * <li>Zero or more further plain ring layers (together with the layer above, these two flexible blocks make
+ * up the only size-flexible part of the height).</li>
+ * <li>Ring layer with the <b>boric acid injection hatch</b> ('X', left face center) and the primary coolant
+ * <b>export</b> port ('O', right face center) -- always the "3rd layer from the top," regardless of how
+ * many flexible layers are in the middle.</li>
+ * <li>Ring layer with the <b>emergency coolant injection hatch</b> ('Q', left face center) -- always the
+ * "2nd layer from the top."</li>
+ * <li>Solid top cap, except every non-boundary (interior) cell is either a fuel-eligible or control-rod-eligible
+ * channel port slot instead of plain casing -- see below.</li>
+ * </ol>
+ * The fixed layers below the controller (2) plus the fixed layers from the export ring up to the top cap (3)
+ * plus the one flexible layer reserved for the pure water hatch force a minimum total height of 7.
+ * <p>
+ * <b>Fuel/control-rod channel ports</b> ('F'/'C'): every non-boundary cell of the top cap is permanently
+ * designated, at pattern-generation time, as either a <b>fuel</b>-eligible slot ('F') or a
+ * <b>control-rod</b>-eligible slot ('C') -- checkerboard-split (see {@link #createStructurePattern()}) so
+ * neither pool can be starved even at minimum diameter. A fuel-eligible cell only ever accepts a fuel port or
+ * plain vessel casing (never a control rod controller), and vice versa -- the two are never interchangeable at
+ * the same physical position, unlike an earlier revision of this pattern that let either hatch type fill any
+ * interior cell (a single shared symbol let a structurally-valid reactor be built with an arbitrarily skewed
+ * fuel-to-control-rod ratio, and conflated what are physically two different kinds of channel). Casing is a
+ * valid fallback at both symbols, so a player is never forced to fill every eligible cell -- only the global
+ * minimums (2 fuel ports, 4 control rod controllers) are enforced. The exact geometric split (checkerboard) is
+ * a placeholder: this mod's design memory notes an eventual neutron-physics-driven placement puzzle (fuel/rod
+ * adjacency rules) is planned, at which point the "correct" arrangement will emerge from the simulation rather
+ * than from a hardcoded rule here.
+ * <p>
+ * The maintenance hatch and energy hatch use GTST's own standard abilities ({@code MAINTENANCE_HATCH} via
+ * {@link #maintenancePredicate()}, {@code INPUT_ENERGY}). The six fluid ports (coolant import/export, boric
+ * acid, pure water, emergency coolant, radioactive wastewater) are fully wired up too, via
+ * {@link com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityReactorFluidPort}
+ * instances and this mod's own dedicated {@link GTNLMultiblockAbility} per port (not GT's generic
+ * {@code IMPORT_FLUIDS}/{@code EXPORT_FLUIDS} -- see {@link GTNLMultiblockAbility}'s own JavaDoc for why). The
+ * control console link hatch ('L') is wired up too, via
+ * {@link com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityReactorLinkHatch}
+ * (transmitter role) -- this reactor will not do anything meaningful without a control console linked through it
+ * (see this mod's design memory). The startup neutron source hatch ('N') is wired up too, via
+ * {@link com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityNeutronSourceHatch}
+ * -- see {@link #updatePhysicsShape()}/{@link #computeNeutronSourceSeed()} for how its loaded
+ * {@link com.windows2000.gtnuclear.common.item.ItemNeutronSourceRod} is what actually lets the reactor start from
+ * a true-zero neutron population, replacing this class's earlier unconditional placeholder seed.
+ * <p>
+ * This is still a shape/port-position-only pass; interior fuel/control-rod channel layout is not modeled yet, so
+ * {@link #updateFormedValid()} does not drive any of this mod's neutron/thermal physics classes.
+ * <p>
+ * The circular cross-section approximation and dynamic per-size pattern regeneration technique (scan actual
+ * placed casing to detect size, rasterize a filled disk via a distance-squared test, rebuild the
+ * {@link FactoryBlockPattern} every time the structure needs re-checking) mirrors the approach used by the
+ * Supercritical addon's {@code MetaTileEntityFissionReactor}, itself built on the same underlying
+ * {@code FactoryBlockPattern}/{@code BlockPattern} engine this fork inherited from GTCEu.
+ */
+public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplayBase
+                                                   implements AutoControlHost, ScramHost, AccidentHost {
+
+    private static final int MIN_DIAMETER = 7;
+    private static final int MAX_DIAMETER = 31;
+    private static final int MAX_TOTAL_HEIGHT = 37;
+    /** Layers strictly below the controller's own layer: 1 solid bottom cap + 1 import-ring layer. */
+    private static final int LAYERS_BELOW_CONTROLLER = 2;
+    /** Fixed layers strictly above the controller's own layer: export-ring + 1 plain ring + solid top cap. */
+    private static final int FIXED_LAYERS_ABOVE_CONTROLLER = 3;
+    /** One flexible layer is always reserved for the pure/distilled water hatch, even at minimum height. */
+    private static final int MIN_FLEXIBLE_MIDDLE_LAYERS = 1;
+    private static final int MIN_TOTAL_HEIGHT = LAYERS_BELOW_CONTROLLER + 1 + MIN_FLEXIBLE_MIDDLE_LAYERS +
+            FIXED_LAYERS_ABOVE_CONTROLLER;
+    private static final int MAX_FLEXIBLE_MIDDLE_LAYERS = MAX_TOTAL_HEIGHT - LAYERS_BELOW_CONTROLLER - 1 -
+            FIXED_LAYERS_ABOVE_CONTROLLER;
+
+    private static final int UPDATE_OPERATING_STATUS = 300;
+
+    private int diameter = MIN_DIAMETER;
+    private int flexibleMiddleLayers = MIN_FLEXIBLE_MIDDLE_LAYERS;
+    /**
+     * Set by {@link #formStructure(PatternMatchContext)}: true if any fuel port or control rod controller found
+     * among {@link #getMultiblockParts()} sits atop a channel column (layer 2, directly below it) that is not
+     * uniformly filled with its matching housing block. The structure pattern itself cannot express "this whole
+     * column is one block type," so this is verified at runtime instead -- see this class's own JavaDoc.
+     */
+    private boolean fuelControlRodHousingMismatch = false;
+
+    /** Read by the control console screen part over the reactor-console link -- see this class's own JavaDoc. */
+    public boolean isFuelControlRodHousingMismatch() {
+        return fuelControlRodHousingMismatch;
+    }
+
+    /**
+     * One fuel port or control rod controller's position (relative to the controller) and a single generic
+     * "0 = good, 1 = needs attention" gauge -- exactly the data {@code MetaTileEntityConsoleScreen}'s core map
+     * needs to draw itself, both cell types sharing the same green-to-red gradient treatment. For a control rod,
+     * {@code degradationLevel} is its current insertion depth (0 = withdrawn, 1 = fully inserted -- "inserted" is
+     * not literally bad, just the end of the gradient the old insertion-depth coloring already used). For a fuel
+     * port, it is {@code 1 - ItemFuelRod#getFissileCapabilityFraction} of whatever rod is loaded (0 = fresh,
+     * trending towards 1 as fissile content depletes -- 2026-10, roadmap item E, "fuel replacement recommended
+     * UI": this mod's design memory explicitly left the display location to implementer discretion, and the core
+     * map already had the exact gradient machinery a control rod's insertion depth needed). An empty fuel port
+     * reads as {@code 0.0} (same as before this field had any fuel-specific meaning at all -- distinguishing
+     * "empty" from "full and fresh" is not this feature's scope).
+     * <p>
+     * A plain snapshot rather than the live {@link IMultiblockPart} reference: {@link #getMultiblockParts()} is
+     * server-only bookkeeping (see this mod's design memory for this exact recurring pitfall -- confirmed here
+     * too, the core map silently rendered nothing on the client until this was introduced), so
+     * {@link #updateCoreMapCells()} resolves it server-side every tick and {@link #coreMapCells} is synced as
+     * plain data instead.
+     */
+    public record CoreMapCell(int dx, int dz, boolean isFuel, double degradationLevel) {}
+
+    private List<CoreMapCell> coreMapCells = new ArrayList<>();
+
+    /**
+     * Every currently-loaded fuel port/control rod controller, refreshed once per tick by
+     * {@link #updateChannelCaches()} and reused by every other per-tick method below instead of each re-walking
+     * {@link #getMultiblockParts()} (and re-running its own {@code instanceof} checks against every other part
+     * type -- fluid hatches, the console link, etc.) independently. Added 2026-10-06 (Java 25 upgrade
+     * optimization pass, see this mod's design memory): a real measurement found 17 separate
+     * {@code getMultiblockParts()} loops in this class, at least 6 of them (fuel burnup, local Doppler/Xenon,
+     * local MTC, control rod summaries/reactivity, core map cells) running every single tick. Includes every
+     * fuel port regardless of whether it currently holds a rod (callers that only want loaded ones, e.g.
+     * {@link #updateFuelBurnup()}, filter that themselves, same as before this change).
+     */
+    @NotNull
+    private List<MetaTileEntityFuelPort> cachedFuelPorts = new ArrayList<>();
+    /** See {@link #cachedFuelPorts}'s own JavaDoc. */
+    @NotNull
+    private List<MetaTileEntityControlRodController> cachedControlRods = new ArrayList<>();
+
+    /** See {@link #cachedFuelPorts}'s own JavaDoc. Must run before any other method that reads either cache. */
+    private void updateChannelCaches() {
+        List<MetaTileEntityFuelPort> fuelPorts = new ArrayList<>();
+        List<MetaTileEntityControlRodController> controlRods = new ArrayList<>();
+        for (IMultiblockPart part : getMultiblockParts()) {
+            if (part instanceof MetaTileEntityFuelPort fuelPort) {
+                fuelPorts.add(fuelPort);
+            } else if (part instanceof MetaTileEntityControlRodController controlRod) {
+                controlRods.add(controlRod);
+            }
+        }
+        cachedFuelPorts = fuelPorts;
+        cachedControlRods = controlRods;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    @NotNull
+    public List<CoreMapCell> getCoreMapCells() {
+        return coreMapCells;
+    }
+
+    /**
+     * Server-side snapshot of every fuel port/control rod controller's position and (for control rods) insertion
+     * depth -- see {@link CoreMapCell}'s own JavaDoc for why this indirection exists.
+     */
+    private void updateCoreMapCells() {
+        List<CoreMapCell> cells = new ArrayList<>();
+        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
+            BlockPos pos = fuelPort.getPos();
+            ItemStack stack = fuelPort.getInsertedItem();
+            double degradation = stack.getItem() instanceof ItemFuelRod fuelRod ?
+                    1.0 - fuelRod.getFissileCapabilityFraction(stack) : 0.0;
+            cells.add(new CoreMapCell(pos.getX() - getPos().getX(), pos.getZ() - getPos().getZ(), true, degradation));
+        }
+        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
+            BlockPos pos = controlRod.getPos();
+            cells.add(new CoreMapCell(pos.getX() - getPos().getX(), pos.getZ() - getPos().getZ(), false,
+                    controlRod.getInsertionDepth()));
+        }
+        coreMapCells = cells;
+    }
+
+    /**
+     * One control rod controller's position (relative to the controller), current bank assignment, and
+     * insertion depth -- what the console's control rod list (stage 5 of this mod's startup/shutdown sequence
+     * work, 2026-09-21) needs to render itself and target bank-cycle clicks. Same indirection reasoning as
+     * {@link CoreMapCell}: a synced snapshot, not a live {@link IMultiblockPart} reference.
+     */
+    public record ControlRodSummary(int dx, int dz, int bankId, double insertionDepth) {}
+
+    private List<ControlRodSummary> controlRodSummaries = new ArrayList<>();
+
+    /** Read by the control console screen part over the reactor-console link. */
+    @NotNull
+    public List<ControlRodSummary> getControlRodSummaries() {
+        return controlRodSummaries;
+    }
+
+    /** Server-side snapshot backing {@link #controlRodSummaries} -- see {@link ControlRodSummary}'s own JavaDoc. */
+    private void updateControlRodSummaries() {
+        List<ControlRodSummary> summaries = new ArrayList<>();
+        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
+            BlockPos pos = controlRod.getPos();
+            summaries.add(new ControlRodSummary(pos.getX() - getPos().getX(), pos.getZ() - getPos().getZ(),
+                    controlRod.getBankId(), controlRod.getInsertionDepth()));
+        }
+        controlRodSummaries = summaries;
+    }
+
+    /**
+     * Console write-direction command: cycle the control rod controller at world offset ({@code dx}, {@code dz})
+     * (relative to this controller) through {@code 0 -> 1 -> ... -> BANK_COUNT -> 0}. A no-op if no controller
+     * exists at that offset (e.g. it was removed between the console's last sync and this click).
+     */
+    public void requestCycleControlRodBank(int dx, int dz) {
+        for (IMultiblockPart part : getMultiblockParts()) {
+            if (part instanceof MetaTileEntityControlRodController controlRod) {
+                BlockPos pos = controlRod.getPos();
+                if (pos.getX() - getPos().getX() == dx && pos.getZ() - getPos().getZ() == dz) {
+                    controlRod.setBankId((controlRod.getBankId() + 1) %
+                            (MetaTileEntityControlRodController.BANK_COUNT + 1));
+                    markDirty();
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
+     * Console write-direction command: nudge every control rod controller assigned to {@code bankId} (0-
+     * {@link MetaTileEntityControlRodController#BANK_COUNT}, 0 being the default "unassigned" bank -- see
+     * {@link #requestCycleControlRodBank}'s own JavaDoc) by {@code deltaFraction} (e.g. +-0.01 for a +-1% step) --
+     * deliberately a manual per-click nudge, not a one-shot "withdraw/insert fully" jump, per this mod's design
+     * memory (2026-09-17: "自動引き抜きボタンは採用しない"), just applied to a whole bank at once instead of one
+     * controller at a time.
+     */
+    public void requestNudgeBank(int bankId, double deltaFraction) {
+        for (IMultiblockPart part : getMultiblockParts()) {
+            if (part instanceof MetaTileEntityControlRodController controlRod && controlRod.getBankId() == bankId) {
+                controlRod.setInsertionDepth(controlRod.getInsertionDepth() + deltaFraction);
+            }
+        }
+        markDirty();
+    }
+
+    /**
+     * Interior (non-boundary) cell count of a single circular cross-section layer -- recomputed by
+     * {@link #createStructurePattern()} every time the structure is (re)checked. Combined with
+     * {@link #totalHeightLayers()} to approximate the reactor's full 3D interior volume for
+     * {@link RatedCoolantMass}; not NBT-persisted since it is always freshly recomputed before it is needed.
+     */
+    private int interiorCellsPerLayer = 0;
+    /**
+     * Whether {@link #updateReactorPowerConsumption()} found its {@code INPUT_ENERGY} hatch(es) completely
+     * unable to supply any of the desired coolant pump draw this tick -- read by {@link #scramEvaluator} (via
+     * {@link #isPumpPowerUnavailable()}). The consecutive-tick debounce counters this used to drive directly
+     * ({@code linkLossTicks}/{@code powerLossTicks}) now live on {@link ReactorScramEvaluator} itself
+     * (2026-10-06, extracted as the second step of this class's own decomposition -- see this mod's design
+     * memory).
+     */
+    private boolean pumpPowerUnavailable = false;
+
+    /** {@link ScramHost#isPumpPowerUnavailable()}. */
+    @Override
+    public boolean isPumpPowerUnavailable() {
+        return pumpPowerUnavailable;
+    }
+
+    /**
+     * The reactor's coarse startup/shutdown/SCRAM mode -- see {@link ReactorOperatingState}. Nothing outside
+     * {@link #checkScramConditions()} drives this yet (the console's write-direction startup/shutdown/manual-
+     * reset commands are a later phase, per this mod's design memory), so today this can only ever move from
+     * {@link ReactorOperatingStage#SHUTDOWN} into {@link ReactorOperatingStage#TRIPPED} and no further -- the
+     * wiring is complete and tested, but not yet reachable end-to-end in play.
+     */
+    private ReactorOperatingState operatingState = ReactorOperatingState.initial();
+    /** Current primary coolant mass (kg); 0 until the startup coolant injection sequence adds to it. */
+    private double coolantMassKg = 0.0;
+    /**
+     * Cached, client-synced copy of {@link #computeRatedCoolantMassKg()} -- recomputed every tick in
+     * {@link #checkScramConditions()} (which already needs the fresh value for its own LOCA check) rather than
+     * synced separately, purely for display (see {@link #getRatedCoolantMassKg()}); at most one tick stale, which
+     * only matters immediately after a structure resize.
+     */
+    private double ratedCoolantMassKg = 0.0;
+    /**
+     * Whether the console's "begin coolant injection" command is currently active -- see
+     * {@link #requestBeginCoolantInjection()}/{@link #updateCoolantInjection()}. Auto-clears once
+     * {@link #coolantMassKg} reaches {@link #computeRatedCoolantMassKg()}.
+     */
+    private boolean coolantInjectionActive = false;
+    /** Primary coolant pressure (MPa), an operator-managed status value -- see this mod's design memory. */
+    private double pressureMPa = 0.0;
+    /**
+     * Whether the console's "begin pressurization" command is currently active -- provisional (stage 3 of this
+     * mod's startup/shutdown sequence work, 2026-09-21) pending the secondary coolant loop design, see
+     * {@code ConfigHolder.reactor.targetOperatingPressureMPa}'s own comment. Mutually exclusive with
+     * {@link #depressurizationActive}; auto-clears once {@link #pressureMPa} reaches the target.
+     */
+    private boolean pressurizationActive = false;
+    /** As {@link #pressurizationActive}, ramping toward 0 instead. Auto-clears once {@link #pressureMPa} hits 0. */
+    private boolean depressurizationActive = false;
+    /** Primary coolant temperature (Kelvin); ambient until {@code CoolantThermalSolver} is wired in. */
+    private double temperatureKelvin = 300.0;
+    /**
+     * Total EU/t actually drawn this tick (baseline instrumentation + coolant pump combined, see
+     * {@link #updateReactorPowerConsumption()}) -- display-only, not persisted (recomputed fresh every tick).
+     */
+    private long totalPowerConsumptionEuPerTick = 0L;
+    /**
+     * Primary coolant actually pumped out toward the export hatch(es) this tick (mb, see
+     * {@link #updatePrimaryCirculation()}) -- the reactor's own analog of a real RCP's current flow rate.
+     * Display-only, not persisted.
+     */
+    private int primaryCirculationFlowMb = 0;
+    /** Primary coolant boron concentration (ppm), an operator-managed status value. */
+    private double boronPpm = 0.0;
+    /**
+     * Whether the console's "begin boron dilution" command is currently active -- stage 4 of this mod's
+     * startup/shutdown sequence work (2026-09-21). Unlike coolant injection/pressurization, boron adjustment has
+     * no natural stopping target (a real operator dilutes/concentrates by feel, watching reactivity), so this is
+     * a plain toggle (see {@link #requestToggleBoronDilution()}) rather than something that auto-clears. Mutually
+     * exclusive with {@link #boronConcentrationActive}.
+     */
+    private boolean boronDilutionActive = false;
+    /** As {@link #boronDilutionActive}, consuming boric acid solution instead of distilled water. */
+    private boolean boronConcentrationActive = false;
+    /**
+     * Experimental (2026-09-24, balance-tuning tooling; extracted into its own class 2026-10-06, see this mod's
+     * design memory on this class's own decomposition): the optional automatic startup/boron/control-rod
+     * sequencing loop. {@link #updateBoronAdjustment()} reads its {@code getBoronAdjustmentRateFraction()} the
+     * same way it used to read a local field. Deliberately NOT persisted to NBT (see {@link #onRemoval()}) --
+     * {@link ReactorAutoControlSequencer#isActive()} always resets to off across a world reload, since this is
+     * explicitly a short-session experimental tool (not something meant to silently keep running unattended).
+     */
+    @NotNull
+    private final ReactorAutoControlSequencer autoControlSequencer = new ReactorAutoControlSequencer();
+    /**
+     * This reactor's own operating-state machine (automatic stage transitions + every non-manual SCRAM trigger)
+     * -- extracted 2026-10-06 as the second step of this class's own decomposition, see this mod's design
+     * memory. See {@link #checkAutomaticStageTransitions()}/{@link #checkScramConditions()}.
+     */
+    @NotNull
+    private final ReactorScramEvaluator scramEvaluator = new ReactorScramEvaluator();
+    /** As {@link #scramEvaluator}, but for severe-accident (melt/explosion) progression -- see that field's own. */
+    @NotNull
+    private final SevereAccidentProgressionTracker accidentTracker = new SevereAccidentProgressionTracker();
+    /**
+     * Experimental (2026-09-24, balance-tuning tooling): CSV telemetry, opened lazily on the first tick
+     * {@link #autoControlSequencer}'s own {@code update(...)} returns a non-null action label, and closed on
+     * {@link #onRemoval()} -- see {@link ReactorTelemetryLogger}'s own JavaDoc. Decoupled from
+     * {@link #autoControlSequencer}'s own active/inactive toggle (2026-09-29, real-playtest-driven, see this
+     * mod's design memory): logging used to open/close in lockstep with {@link #requestToggleAutoRodControl()},
+     * so toggling auto control off to make a manual adjustment (or just observe) silently lost telemetry, and
+     * toggling back on fragmented one continuous session across multiple files. Now mirrors
+     * {@code MetaTileEntityHeatExchanger}'s own always-on-once-formed logger -- it keeps running regardless of
+     * the auto-control toggle, logging {@code "manual"} as the action label whenever the loop is inactive. Not
+     * NBT-persisted, matching {@link #autoControlSequencer}'s own reasoning (re-opening a log file mid-append
+     * across a reload would need more bookkeeping than this experimental feature's scope warrants) -- a fresh
+     * file opens again after any reload.
+     */
+    @Nullable
+    private ReactorTelemetryLogger telemetryLogger = null;
+    /**
+     * Fuel's own temperature (Kelvin), decoupled from {@link #temperatureKelvin} (the primary coolant's) -- see
+     * {@link #updateFuelAndCoolantThermal()}. A real meltdown is fundamentally a "fuel heats up faster than
+     * coolant can carry the heat away" phenomenon, so a single shared temperature node cannot represent it.
+     */
+    private double fuelTemperatureKelvin = 300.0;
+    /**
+     * Fraction (0-1) of the core's total fuel mass that has become corium -- 0 until fuel reaches
+     * {@code SevereAccidentConstants.FUEL_MELTING_TEMPERATURE_KELVIN} and begins melting (Stage 4 wires this into
+     * {@link com.windows2000.gtnuclear.api.nuclear.accident.SevereAccidentEvaluator}). Tracked as an absolute
+     * mass here (not the evaluator's own derived fraction) since it accumulates independently every tick.
+     */
+    private double meltedFuelMassKg = 0.0;
+
+    /** {@link AccidentHost#getMeltedFuelMassKg()}. */
+    @Override
+    public double getMeltedFuelMassKg() {
+        return meltedFuelMassKg;
+    }
+
+    /**
+     * {@link #computeTotalCoreFuelMassKg()}'s value captured the instant {@link #meltedFuelMassKg} first becomes
+     * positive, then reused for the rest of that meltdown instead of a freshly recomputed live value -- see
+     * {@link #updateFuelTemperatureStep(double, double, double, double, double)}/
+     * {@link #updateSevereAccidentState()}'s own JavaDoc for why:
+     * corium already formed from a specific core's fuel does not care how much fuel happens to be loaded right
+     * now, but both the melt-progression cap and the meltdown-fraction calculation were comparing
+     * {@link #meltedFuelMassKg} against whatever fuel is CURRENTLY loaded -- reloading even a small amount of
+     * fresh fuel after fuel was removed following an earlier meltdown made that small new total look almost
+     * entirely melted, up to instantly re-triggering EXPLOSION (confirmed via a real playtest report, 2026-09-22:
+     * inserting fresh LEU into an otherwise completely inert, sub-critical, sourceless, shut-down reactor caused
+     * an immediate explosion).
+     */
+    private double coreFuelMassAtMeltdownStartKg = 0.0;
+
+    /** {@link AccidentHost#getCoreFuelMassAtMeltdownStartKg()}. */
+    @Override
+    public double getCoreFuelMassAtMeltdownStartKg() {
+        return coreFuelMassAtMeltdownStartKg;
+    }
+
+    /**
+     * Fraction (0-1) of primary coolant currently flashed to steam -- see {@link #updateFuelAndCoolantThermal()}'s
+     * subcooling-margin check. Feeds a negative reactivity term in {@link #updatePhysicsAmplitude()} (a PWR's
+     * inherent void feedback) and Stage 4's severe accident "abnormal cooling" condition.
+     */
+    private double primaryVoidFraction = 0.0;
+    /**
+     * Severe accident staging (NORMAL -&gt; UNCONTROLLED_HEATING -&gt; MELTDOWN -&gt; EXPLOSION) -- see
+     * {@link #updateSevereAccidentState()}. {@link SevereAccidentProgressionTracker} itself is
+     * structure-independent/pure; this field is this reactor's own instance of the state it advances.
+     */
+    @NotNull
+    private SevereAccidentState severeAccidentState = SevereAccidentState.normal();
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public double getFuelTemperatureKelvin() {
+        return fuelTemperatureKelvin;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public double getPrimaryVoidFraction() {
+        return primaryVoidFraction;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    @NotNull
+    public SevereAccidentState getSevereAccidentState() {
+        return severeAccidentState;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    @NotNull
+    public ReactorOperatingState getOperatingState() {
+        return operatingState;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public double getCoolantMassKg() {
+        return coolantMassKg;
+    }
+
+    /** Read by the control console screen part over the reactor-console link -- see {@link #ratedCoolantMassKg}. */
+    public double getRatedCoolantMassKg() {
+        return ratedCoolantMassKg;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public boolean isCoolantInjectionActive() {
+        return coolantInjectionActive;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public double getPressureMPa() {
+        return pressureMPa;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public boolean isPressurizationActive() {
+        return pressurizationActive;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public boolean isDepressurizationActive() {
+        return depressurizationActive;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public double getTemperatureKelvin() {
+        return temperatureKelvin;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public boolean isBoronDilutionActive() {
+        return boronDilutionActive;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public boolean isBoronConcentrationActive() {
+        return boronConcentrationActive;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public double getBoronPpm() {
+        return boronPpm;
+    }
+
+    /**
+     * Read by the control console screen part over the reactor-console link -- see
+     * {@link #totalPowerConsumptionEuPerTick}.
+     */
+    public long getTotalPowerConsumptionEuPerTick() {
+        return totalPowerConsumptionEuPerTick;
+    }
+
+    /**
+     * Read by the control console screen part over the reactor-console link -- see {@link #primaryCirculationFlowMb}.
+     */
+    public int getPrimaryCirculationFlowMb() {
+        return primaryCirculationFlowMb;
+    }
+
+    /** Side length of a cubic CMFD node (cm), representative of a real PWR fuel assembly pitch. */
+    private static final double CHANNEL_NODE_SIZE_CM = 20.0;
+    /**
+     * How rarely the CMFD "shape" solve and fuel-composition-derived point kinetics constants are recomputed --
+     * the quasi-static method's own division of labor (see this mod's design memory) calls for this to be rare,
+     * not every tick. Unlike the reactor's own block structure (which only re-triggers
+     * {@link #formStructure(PatternMatchContext)} on a fresh unformed-to-formed transition, per GTST's own
+     * {@code MultiblockControllerBase#checkStructurePattern()}), a player loading/removing a fuel rod does not
+     * re-trigger that hook at all -- so a periodic timer is used instead of trying to hook every possible change
+     * source (structure change, fuel swap, etc.) individually.
+     */
+    private static final int PHYSICS_SHAPE_RECOMPUTE_INTERVAL_TICKS = 100;
+    private static final double TICK_SECONDS = 1.0 / 20.0;
+
+    private int physicsShapeTicksUntilRecompute = 0;
+    @Nullable
+    private CMFDResult cmfdResult;
+    @Nullable
+    private PointKineticsConstants pointKineticsConstants;
+    private PointKineticsState pointKineticsState = new PointKineticsState(0.0, new double[0]);
+    private XenonIodineState xenonIodineState = new XenonIodineState(0.0, 0.0);
+    /**
+     * Last computed total reactivity (shape + control rods + xenon + boron); display-only, not itself a state
+     * variable fed back into anything.
+     */
+    private double totalReactivity = 0.0;
+    /**
+     * Experimental (2026-09-29, debug tooling, see this mod's design memory): {@link #cmfdResult}'s own raw shape
+     * reactivity (pcm), i.e. {@code (kEffective - 1) / kEffective * 1.0e5}, <b>before</b> control rods/xenon/
+     * boron/void/MTC/Doppler are subtracted -- the one component of {@link #totalReactivity} that a player cannot
+     * otherwise observe directly, since every other term (rod insertion, boron ppm, temperature) is already shown
+     * on the console. Added specifically to let a real playtest measure this reactor's actual built shape
+     * reactivity directly, rather than needing to back-derive it by subtracting the other displayed terms from
+     * {@link #totalReactivity} by hand -- exactly the manual reverse-engineering a real playtest needed to
+     * diagnose why bank 0 was running out of withdrawal margin even at 0% insertion. {@code cmfdResult} itself is
+     * never synced to the client (it also carries a full per-node flux map, unneeded for display), so this is
+     * computed server-side in {@link #updatePhysicsAmplitude()} and synced as a plain double like every other
+     * reactivity-term getter here.
+     */
+    private double shapeReactivityPcm = 0.0;
+    /**
+     * Flux-squared-weighted average, across every loaded fuel port's own local Doppler reactivity, of the same
+     * formula {@link #getDopplerReactivityPcm()} used to expose as a single reactor-wide value -- see
+     * {@link #updateLocalDopplerAndXenonReactivity()}'s own JavaDoc for the full local-feedback derivation.
+     * Computed server-side in {@link #updatePhysicsAmplitude()}, synced as a plain double like every other
+     * reactivity-term field here.
+     */
+    private double localDopplerReactivityPcm = 0.0;
+    /**
+     * Max-minus-min spread (pcm) of local Doppler reactivity across every loaded fuel port, computed alongside
+     * {@link #localDopplerReactivityPcm} in {@link #updateLocalDopplerAndXenonReactivity()} -- a debug-only
+     * indicator that this reactor's own local feedback is actually diverging port-to-port (0 whenever every
+     * port's local conditions coincide, which is otherwise indistinguishable from "local feedback isn't
+     * working" by looking at {@link #localDopplerReactivityPcm} alone, since that value is identical to the old
+     * flat model in exactly that same uniform case).
+     */
+    private double dopplerReactivityPcmSpread = 0.0;
+    /** As {@link #dopplerReactivityPcmSpread}, but for local Xenon reactivity. */
+    private double xenonReactivityPcmSpread = 0.0;
+    /**
+     * Flux-squared-weighted average, across every axial layer's own local moderator-temperature reactivity, of
+     * the same quadratic formula {@link #getModeratorTemperatureReactivityPcm()} used to expose as a single
+     * reactor-wide value -- see {@link #computeLocalModeratorTemperatureReactivityPcm()}'s own JavaDoc for the
+     * axial-profile derivation. Computed server-side in {@link #updatePhysicsAmplitude()}, synced as a plain
+     * double like every other reactivity-term field here.
+     */
+    private double localModeratorTemperatureReactivityPcm = 0.0;
+    /**
+     * Console display estimate (stage 6 of this mod's startup/shutdown sequence work, 2026-09-21) of remaining
+     * "iodine pit" duration -- see {@link XenonDeadTimeCalibration#estimateRemainingDeadTimeSeconds}'s own
+     * JavaDoc. Only recomputed (in {@link #syncPhysicsDisplayPeriodically()}) while not {@code OPERATING}/
+     * {@code STARTUP}, since it assumes zero neutron population going forward; stays at its last value otherwise
+     * (display-only, never gates anything).
+     */
+    private double xenonDeadTimeRemainingSeconds = 0.0;
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public double getRelativeNeutronPopulation() {
+        return pointKineticsState.relativeNeutronPopulation;
+    }
+
+    /**
+     * Experimental (2026-09-28, diagnostic-only, see this mod's design memory): exposes
+     * {@link #computeNeutronSourceSeed()}'s raw value and whether {@link #pointKineticsConstants}/
+     * {@link #cmfdResult} are currently non-null, for {@link ReactorTelemetryLogger} to log directly -- narrows
+     * down why {@link #pointKineticsState}'s own population has stayed at exactly 0 despite a real playtest
+     * confirming a fresh (99.66%-remaining) neutron source rod is loaded and reactivity is comfortably positive.
+     */
+    public double getNeutronSourceSeedForDebug() {
+        return computeNeutronSourceSeed();
+    }
+
+    /** See {@link #getNeutronSourceSeedForDebug()}'s own JavaDoc. */
+    public boolean hasPointKineticsConstantsForDebug() {
+        return pointKineticsConstants != null;
+    }
+
+    /** See {@link #getNeutronSourceSeedForDebug()}'s own JavaDoc. */
+    public boolean hasCmfdResultForDebug() {
+        return cmfdResult != null;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public double getTotalReactivity() {
+        return totalReactivity;
+    }
+
+    /** See {@link #shapeReactivityPcm}'s own JavaDoc. Read by the control console screen part. */
+    public double getShapeReactivityPcm() {
+        return shapeReactivityPcm;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public double getXenonReactivityWorth() {
+        return xenonIodineState.xenonConcentration();
+    }
+
+    /**
+     * Read by the control console screen part over the reactor-console link -- see
+     * {@link #xenonDeadTimeRemainingSeconds}.
+     */
+    public double getXenonDeadTimeRemainingSeconds() {
+        return xenonDeadTimeRemainingSeconds;
+    }
+
+    /**
+     * Reactivity contribution (pcm) from the moderator temperature coefficient -- the flux-squared-weighted
+     * average of each axial layer's own local moderator-temperature reactivity, not a single reactor-wide value
+     * computed from {@link #temperatureKelvin} directly (see
+     * {@link #computeLocalModeratorTemperatureReactivityPcm()}'s own JavaDoc for why, and for the axial-profile
+     * derivation in general). See {@link ModeratorTemperatureReactivity}'s own JavaDoc for why each layer's own
+     * evaluation is a quadratic (not flat-linear) curve in temperature.
+     */
+    public double getModeratorTemperatureReactivityPcm() {
+        return localModeratorTemperatureReactivityPcm;
+    }
+
+    /**
+     * Reactivity contribution (pcm) from the Doppler (fuel temperature) coefficient -- the flux-squared-weighted
+     * average of each fuel port's own local Doppler reactivity, not a single reactor-wide value computed from
+     * {@link #fuelTemperatureKelvin} directly (see {@link #updateLocalDopplerAndXenonReactivity()}'s own JavaDoc
+     * for why, and for the local-feedback derivation in general). Equal to the old flat-{@link
+     * #fuelTemperatureKelvin} formula whenever every port's local conditions happen to coincide.
+     */
+    public double getDopplerReactivityPcm() {
+        return localDopplerReactivityPcm;
+    }
+
+    /** See {@link #dopplerReactivityPcmSpread}'s own JavaDoc. Read by the control console screen part. */
+    public double getDopplerReactivityPcmSpread() {
+        return dopplerReactivityPcmSpread;
+    }
+
+    /** See {@link #xenonReactivityPcmSpread}'s own JavaDoc. Read by the control console screen part. */
+    public double getXenonReactivityPcmSpread() {
+        return xenonReactivityPcmSpread;
+    }
+
+    private int totalHeightLayers() {
+        return LAYERS_BELOW_CONTROLLER + 1 + flexibleMiddleLayers + FIXED_LAYERS_ABOVE_CONTROLLER;
+    }
+
+    /**
+     * This reactor's own size-scaled "full tank" primary coolant mass -- see {@link RatedCoolantMass}. Computed
+     * fresh server-side wherever it's needed; {@link #ratedCoolantMassKg} is the cached, client-synced copy
+     * {@link #getRatedCoolantMassKg()} actually returns (see that field's own JavaDoc).
+     */
+    @Override
+    public double computeRatedCoolantMassKg() {
+        return RatedCoolantMass.ratedMassKg(interiorCellsPerLayer * totalHeightLayers(),
+                ConfigHolder.reactor.ratedCoolantMassPerInteriorCellKg);
+    }
+
+    /**
+     * This reactor's own size-scaled rated thermal power (W) at relative power 1.0 -- same scaling pattern as
+     * {@link #computeRatedCoolantMassKg()}.
+     */
+    private double computeRatedThermalPowerWatts() {
+        return RatedCoolantMass.ratedMassKg(interiorCellsPerLayer * totalHeightLayers(),
+                ConfigHolder.reactor.ratedThermalPowerPerInteriorCellWatts);
+    }
+
+    /** This reactor's own size-scaled fuel-to-coolant heat transfer coefficient (W/K) -- same scaling pattern. */
+    private double computeFuelCoolantUA() {
+        return RatedCoolantMass.ratedMassKg(interiorCellsPerLayer * totalHeightLayers(),
+                ConfigHolder.reactor.fuelCoolantHeatTransferPerInteriorCellWattsPerKelvin);
+    }
+
+    /**
+     * Total fuel mass (kg) currently loaded across every fuel port -- each rod nominally holds
+     * {@code ConfigHolder.reactor.fuelRodUraniumMassKg} of heavy metal, ignoring cladding mass and the (slight,
+     * mass-conserving) shift in isotope composition from burnup.
+     */
+    @Override
+    public double computeTotalCoreFuelMassKg() {
+        int loadedFuelPorts = 0;
+        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
+            if (fuelPort.getLoadedComposition() != null) loadedFuelPorts++;
+        }
+        return loadedFuelPorts * ConfigHolder.reactor.fuelRodUraniumMassKg;
+    }
+
+    /**
+     * The "shape" half of the quasi-static method: rebuilds {@link #cmfdResult} and
+     * {@link #pointKineticsConstants} from the reactor's currently-loaded fuel every
+     * {@link #PHYSICS_SHAPE_RECOMPUTE_INTERVAL_TICKS} ticks. Whenever the neutron population is still at (or has
+     * decayed back down to) zero, a freshly-available fuel composition seeds a non-zero population from the
+     * loaded neutron source hatch's current strength (see {@link #computeNeutronSourceSeed()}) -- without this, a
+     * point kinetics system started from exact zero population and zero precursors stays at exactly zero forever
+     * regardless of reactivity, but a reactor with no source loaded (or a fully-spent one) genuinely cannot
+     * start, matching reality. Re-checked every recompute interval (not just once) rather than gated on an
+     * array-length mismatch: gating on length alone meant a reactor whose fuel became valid before its neutron
+     * source rod was inserted would have its (length-0) state zero-padded by {@link #updatePhysicsAmplitude()}'s
+     * own guard on the very same tick, permanently satisfying the length check and never re-attempting the seed
+     * even after a valid source was later loaded (confirmed via a real playtest, 2026-09-22: reactivity
+     * +26795 pcm, all rods withdrawn, source rod loaded, yet power stayed at exactly 0 forever).
+     */
+    private void updatePhysicsShape() {
+        if (physicsShapeTicksUntilRecompute > 0) {
+            physicsShapeTicksUntilRecompute--;
+            return;
+        }
+        physicsShapeTicksUntilRecompute = PHYSICS_SHAPE_RECOMPUTE_INTERVAL_TICKS;
+
+        advanceNeutronSourceDecay();
+
+        ReactorGeometry geometry = buildReactorGeometry();
+        cmfdResult = geometry.size() > 0 ? CMFDSolver.solve(geometry) : null;
+
+        List<FuelComposition> loadedCompositions = new ArrayList<>();
+        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
+            FuelComposition composition = fuelPort.getLoadedComposition();
+            if (composition != null) loadedCompositions.add(composition);
+        }
+        Map<Element, Double> fissionShares = PointKineticsConstants.aggregateFissionShares(loadedCompositions);
+        pointKineticsConstants = fissionShares.isEmpty() ? null :
+                PointKineticsConstants.fissionWeighted(fissionShares,
+                        PointKineticsConstants.STANDARD_PROMPT_NEUTRON_LIFETIME);
+        if (pointKineticsConstants != null && pointKineticsState.relativeNeutronPopulation <= 0) {
+            double sourceSeed = computeNeutronSourceSeed();
+            if (sourceSeed > 0) {
+                pointKineticsState = PointKineticsState.equilibrium(sourceSeed, pointKineticsConstants);
+            }
+        }
+    }
+
+    /**
+     * Fraction of Californium-252 decays that proceed via spontaneous fission (the branch that actually emits
+     * neutrons, as opposed to the other 96.91% alpha branch) -- a real, confident physical constant, not a
+     * gameplay-balance value (see {@code ConfigHolder.reactor.neutronSourceStrengthCoefficient} for the actual
+     * tunable knob in this calculation).
+     */
+    private static final double CF252_SPONTANEOUS_FISSION_BRANCHING_RATIO = 0.0309;
+
+    /**
+     * Advances the loaded neutron source hatch's rod (if any) by one shape-recompute interval's worth of decay,
+     * using a dedicated compressed half-life ({@code ConfigHolder.reactor.neutronSourceCompressedHalfLifeDays})
+     * rather than the shared {@code TimeCompression} -- see {@code NeutronSourceMaterials}'s own JavaDoc for why
+     * reusing that shared calibration is not appropriate here. Only Californium-252 itself ever has a positive
+     * half-life in this item's inventory (its daughter, Curium-248, is registered stable -- see
+     * {@code GTNLElements}), so this fixed-value compressor never needs to vary by isotope.
+     */
+    private void advanceNeutronSourceDecay() {
+        for (IMultiblockPart part : getMultiblockParts()) {
+            if (!(part instanceof MetaTileEntityNeutronSourceHatch sourceHatch)) continue;
+            ItemStack stack = sourceHatch.getInsertedItem();
+            if (!(stack.getItem() instanceof ItemNeutronSourceRod sourceRod)) return;
+
+            Map<Element, Double> current = sourceRod.getIsotopeAmounts(stack);
+            double elapsedSeconds = PHYSICS_SHAPE_RECOMPUTE_INTERVAL_TICKS * TICK_SECONDS;
+            Map<Element, Double> decayed = DecayEngine.advance(current, elapsedSeconds,
+                    real -> ConfigHolder.reactor.neutronSourceCompressedHalfLifeDays * 86400.0);
+            sourceHatch.setLoadedIsotopeAmounts(decayed);
+            return;
+        }
+    }
+
+    /**
+     * @return a point-kinetics seed value proportional to the loaded neutron source hatch's current Cf-252
+     *         spontaneous fission rate, or 0 if no hatch/rod is present -- see
+     *         {@code ConfigHolder.reactor.neutronSourceStrengthCoefficient}'s own JavaDoc for the conversion.
+     */
+    private double computeNeutronSourceSeed() {
+        for (IMultiblockPart part : getMultiblockParts()) {
+            if (!(part instanceof MetaTileEntityNeutronSourceHatch sourceHatch)) continue;
+            ItemStack stack = sourceHatch.getInsertedItem();
+            if (!(stack.getItem() instanceof ItemNeutronSourceRod sourceRod)) return 0.0;
+
+            double cf252Amount = sourceRod.getIsotopeAmounts(stack).getOrDefault(GTNLElements.Cf252, 0.0);
+            if (cf252Amount <= 0) return 0.0;
+            double compressedHalfLifeSeconds = ConfigHolder.reactor.neutronSourceCompressedHalfLifeDays * 86400.0;
+            double decayConstant = Math.log(2) / compressedHalfLifeSeconds;
+            double spontaneousFissionRate = cf252Amount * decayConstant * CF252_SPONTANEOUS_FISSION_BRANCHING_RATIO;
+            return spontaneousFissionRate * ConfigHolder.reactor.neutronSourceStrengthCoefficient;
+        }
+        return 0.0;
+    }
+
+    /**
+     * One CMFD node per (fuel port / control rod controller) per vertical layer of its own channel, from
+     * {@code channelBottomY} up to the port's own Y -- see this mod's design memory (2026-09-20) for why this is
+     * a "formal" 3D geometry (repeating the same node up the column) rather than one node per whole channel: the
+     * current block-level design has no way to place different fuel at different heights within one channel, so
+     * there is no per-height data to vary by, but the solver still resolves real axial leakage this way. Node
+     * positions are plain world-offset-from-controller coordinates, not the pattern generator's own row/column
+     * indices -- {@link ReactorGeometry} only needs consistent face-adjacency, not any particular numbering.
+     */
+    @NotNull
+    private ReactorGeometry buildReactorGeometry() {
+        ReactorGeometry geometry = new ReactorGeometry(CHANNEL_NODE_SIZE_CM);
+        if (getWorld() == null) return geometry;
+        int channelBottomYRelative = -LAYERS_BELOW_CONTROLLER + 1;
+        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
+            BlockPos pos = fuelPort.getPos();
+            ReactorGeometryBuilder.addChannelColumn(geometry, pos.getX() - getPos().getX(),
+                    pos.getZ() - getPos().getZ(), channelBottomYRelative, pos.getY() - getPos().getY(),
+                    fuelPort.getLoadedComposition());
+        }
+        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
+            // Control rod channels always use a fixed moderator-like node regardless of insertion depth -- rod
+            // worth is a separate per-tick amplitude-stage term, not a CMFD shape input. See
+            // ReactorNodeFactory#moderatorNode's own JavaDoc.
+            BlockPos pos = controlRod.getPos();
+            ReactorGeometryBuilder.addChannelColumn(geometry, pos.getX() - getPos().getX(),
+                    pos.getZ() - getPos().getZ(), channelBottomYRelative, pos.getY() - getPos().getY(), null);
+        }
+        return geometry;
+    }
+
+    /**
+     * The "amplitude" half of the quasi-static method: every tick, sums this tick's total reactivity (CMFD shape
+     * + control rods + xenon + boron) and advances both {@link #pointKineticsState} and {@link #xenonIodineState}
+     * by one tick. Runs unconditionally regardless of {@link #operatingState} -- with control rod controllers
+     * defaulting to fully inserted (see that class's own JavaDoc), correctness falls out of the physics itself
+     * (deeply negative control rod reactivity keeps the population decayed near zero) rather than needing an
+     * explicit "only run while OPERATING" gate, which would anticipate console write-direction commands
+     * (starting/stopping the reactor) that do not exist yet.
+     */
+    private void updatePhysicsAmplitude() {
+        if (cmfdResult == null || pointKineticsConstants == null) {
+            pointKineticsState = new PointKineticsState(0.0, new double[0]);
+            xenonIodineState = new XenonIodineState(0.0, 0.0);
+            totalReactivity = 0.0;
+            shapeReactivityPcm = 0.0;
+            localDopplerReactivityPcm = 0.0;
+            localModeratorTemperatureReactivityPcm = 0.0;
+            return;
+        }
+
+        // Guards against the same "no valid neutron source" case updatePhysicsShape()'s own reseed leaves
+        // unresolved (sourceSeed <= 0 there simply skips reseeding, since a reactor with no source hatch/rod
+        // genuinely cannot start -- see that method's own JavaDoc): without this, pointKineticsState could stay
+        // at its initial zero-length precursor array while pointKineticsConstants.groupCount() is already
+        // nonzero (fuel loaded), and PointKineticsSolver.advance() would throw ArrayIndexOutOfBoundsException on
+        // the very next tick (confirmed via a real playtest crash, 2026-09-22). Falls back to a genuine
+        // zero-population state of the correct length, not an equilibrium seed -- only
+        // computeNeutronSourceSeed() > 0 is allowed to actually start the reactor from zero.
+        if (pointKineticsState.precursorConcentrations.length != pointKineticsConstants.groupCount()) {
+            pointKineticsState = new PointKineticsState(0.0, new double[pointKineticsConstants.groupCount()]);
+        }
+
+        double shapeReactivity = cmfdResult.kEffective() > 0 ? (cmfdResult.kEffective() - 1) / cmfdResult.kEffective() :
+                -1.0;
+        shapeReactivityPcm = shapeReactivity * 1.0e5;
+        double controlRodReactivity = sumControlRodReactivity();
+        // Local (per-fuel-port) Doppler/Xenon -- see updateLocalDopplerAndXenonReactivity()'s own JavaDoc. Writes
+        // localDopplerReactivityPcm and (as a flux-squared-weighted display aggregate, no longer an independently
+        // simulated state) xenonIodineState, both read below exactly as the pre-local-feedback code read them.
+        updateLocalDopplerAndXenonReactivity();
+        double xenonReactivity = xenonIodineState.reactivity();
+        double boronReactivityValue = BoronReactivity.reactivity(boronPpm, ConfigHolder.reactor.boronWorthPerPpm);
+        // A PWR's inherent void feedback: primary coolant voiding (see updateFuelAndCoolantThermal()'s
+        // subcooling-margin check) reduces moderation, a negative feedback that -- unlike xenon/boron -- responds
+        // within the same tick it occurs. Added 2026-09-24 (real-playtest-driven): unlike this, the moderator
+        // temperature coefficient below responds continuously across the ENTIRE operating temperature range, not
+        // only once bulk boiling has already started -- this reactor's actual first line of defense, matching a
+        // real PWR's own continuous negative feedback (see getModeratorTemperatureReactivityPcm()'s own JavaDoc).
+        double voidReactivity = ConfigHolder.reactor.voidReactivityCoefficientPcm * primaryVoidFraction / 1.0e5;
+        localModeratorTemperatureReactivityPcm = computeLocalModeratorTemperatureReactivityPcm();
+        double moderatorTemperatureReactivity = localModeratorTemperatureReactivityPcm / 1.0e5;
+        // Doppler (fuel temperature) feedback: unlike moderatorTemperatureReactivity above (which lags behind
+        // fission power changes through fuelCoolantHeatTransferPerInteriorCellWattsPerKelvin's own heat-transfer
+        // delay), this responds to local fuel temperature directly -- a real PWR's actual fastest-acting negative
+        // feedback, present from the instant fuel itself starts heating. See dopplerCoefficientPcmPerKelvin's own
+        // JavaDoc for why this was missing entirely before (2026-09-26, real-PWR-data-driven analysis).
+        double dopplerReactivity = localDopplerReactivityPcm / 1.0e5;
+        totalReactivity = shapeReactivity + controlRodReactivity + xenonReactivity + boronReactivityValue +
+                voidReactivity + moderatorTemperatureReactivity + dopplerReactivity;
+
+        pointKineticsState = PointKineticsSolver.advance(pointKineticsState, totalReactivity, TICK_SECONDS,
+                pointKineticsConstants);
+
+        // Complementary post-advance half of updateLocalDopplerAndXenonReactivity() -- see
+        // advanceLocalXenonStates()'s own JavaDoc for why this runs after (not folded into) the pass above.
+        advanceLocalXenonStates();
+    }
+
+    /**
+     * This fuel port's own channel-top CMFD node position, relative to this controller -- the shared key
+     * {@link #cmfdResult}'s flux maps are read by, both in {@link #updateFuelBurnup()} and every local-feedback
+     * method below.
+     */
+    @NotNull
+    private NodePosition fuelPortTopPosition(@NotNull MetaTileEntityFuelPort fuelPort) {
+        BlockPos pos = fuelPort.getPos();
+        return new NodePosition(pos.getX() - getPos().getX(), pos.getY() - getPos().getY(),
+                pos.getZ() - getPos().getZ());
+    }
+
+    /**
+     * Local (per-fuel-port) Doppler and Xenon feedback -- see this mod's design memory for the full derivation:
+     * first-order perturbation theory for a two-group diffusion eigenvalue problem reduces, for a self-adjoint-
+     * ish system, to a flux-squared-weighted average of each node's own local reactivity-formula evaluation
+     * (Doppler against the fast-group flux, since Doppler/resonance capture is a fast/epithermal phenomenon in
+     * this mod's two-group split; Xenon against the thermal-group flux, since Xe-135 absorption is almost purely
+     * thermal). Reusing {@link #cmfdResult}'s already-normalized flux (core average 1.0) rather than CMFD's own
+     * raw node data means no new calibration constant or diagnostic test is needed: whenever every port shares
+     * the same local value, the weighted average ({@link FluxWeightedAverage}) is exactly that value regardless
+     * of the weight distribution, reproducing the old reactor-wide-scalar behavior exactly rather than only
+     * approximately.
+     * <p>
+     * Called from {@link #updatePhysicsAmplitude()} <i>before</i> this tick's {@link #pointKineticsState}
+     * advance, reading whichever local xenon state each fuel rod's own NBT currently holds (i.e. the end of the
+     * previous tick) -- mirroring how the pre-local-feedback code read the old (reactor-wide) {@link
+     * #xenonIodineState} before advancing it. {@link #advanceLocalXenonStates()} is the complementary
+     * post-advance half.
+     * <p>
+     * Local fuel temperature is deliberately <b>not</b> its own independently-simulated per-port state (unlike
+     * local xenon, which genuinely needs one -- iodine-precursor decay gives it real multi-hour memory that an
+     * instantaneous formula cannot capture): {@link #fuelTemperatureKelvin}'s own fuel-coolant coupling already
+     * needs many sub-steps per tick to stay numerically stable (see {@link #computeFuelCoolantSubSteps}'s own
+     * JavaDoc), meaning real fuel-coolant equilibration is fast compared to a tick, i.e. already close to
+     * quasi-steady-state at tick resolution. Each port's own local temperature is instead computed as a
+     * <i>deviation</i> from the existing {@link #fuelTemperatureKelvin} baseline, proportional to how far that
+     * port's own local relative power sits from the reactor-wide average: {@code localTemp =
+     * fuelTemperatureKelvin + (ratedThermalPowerWatts / fuelCoolantUA) * (localRelativePower -
+     * globalRelativePower)} -- the local steady-state fuel-coolant gap implied by that port's own power share,
+     * added on top of whatever the real (possibly still-transient) global gap currently is. When every port
+     * shares the same local relative power the correction is exactly zero and every port's local temperature
+     * exactly equals {@link #fuelTemperatureKelvin}, preserving backward compatibility even mid-transient, not
+     * only at steady state.
+     */
+    private void updateLocalDopplerAndXenonReactivity() {
+        List<MetaTileEntityFuelPort> fuelPorts = new ArrayList<>();
+        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
+            if (fuelPort.getInsertedItem().getItem() instanceof ItemFuelRod) {
+                fuelPorts.add(fuelPort);
+            }
+        }
+        if (cmfdResult == null || fuelPorts.isEmpty()) {
+            localDopplerReactivityPcm = 0.0;
+            dopplerReactivityPcmSpread = 0.0;
+            xenonReactivityPcmSpread = 0.0;
+            xenonIodineState = new XenonIodineState(0.0, 0.0);
+            return;
+        }
+
+        double globalRelativePower = pointKineticsState.relativeNeutronPopulation;
+        double fuelCoolantUA = computeFuelCoolantUA();
+        double temperatureSensitivity = fuelCoolantUA > 0 ? computeRatedThermalPowerWatts() / fuelCoolantUA : 0.0;
+
+        double[] dopplerValues = new double[fuelPorts.size()];
+        double[] dopplerWeights = new double[fuelPorts.size()];
+        double[] iodineValues = new double[fuelPorts.size()];
+        double[] xenonValues = new double[fuelPorts.size()];
+        double[] xenonWeights = new double[fuelPorts.size()];
+
+        for (int i = 0; i < fuelPorts.size(); i++) {
+            MetaTileEntityFuelPort fuelPort = fuelPorts.get(i);
+            ItemStack stack = fuelPort.getInsertedItem();
+            ItemFuelRod fuelRod = (ItemFuelRod) stack.getItem();
+            NodePosition topPosition = fuelPortTopPosition(fuelPort);
+            double fastFlux = cmfdResult.fastFlux().getOrDefault(topPosition, 0.0);
+            double thermalFlux = cmfdResult.thermalFlux().getOrDefault(topPosition, 0.0);
+            double localRelativePower = (fastFlux + thermalFlux) * globalRelativePower;
+
+            double localFuelTemperatureKelvin = fuelTemperatureKelvin +
+                    temperatureSensitivity * (localRelativePower - globalRelativePower);
+            dopplerValues[i] = ConfigHolder.reactor.dopplerCoefficientPcmPerKelvin *
+                    (localFuelTemperatureKelvin - AMBIENT_TEMPERATURE_KELVIN);
+            dopplerWeights[i] = fastFlux * fastFlux;
+
+            XenonIodineState localState = fuelRod.getLocalXenonIodineState(stack, xenonIodineState);
+            iodineValues[i] = localState.iodineConcentration();
+            xenonValues[i] = localState.xenonConcentration();
+            xenonWeights[i] = thermalFlux * thermalFlux;
+        }
+
+        localDopplerReactivityPcm = FluxWeightedAverage.average(dopplerValues, dopplerWeights);
+        double averageIodine = FluxWeightedAverage.average(iodineValues, xenonWeights);
+        double averageXenon = FluxWeightedAverage.average(xenonValues, xenonWeights);
+        xenonIodineState = new XenonIodineState(averageIodine, averageXenon);
+
+        // Debug-only spread indicators -- see dopplerReactivityPcmSpread's own JavaDoc for why these exist
+        // separately from the weighted averages above.
+        dopplerReactivityPcmSpread = FluxWeightedAverage.spread(dopplerValues);
+        double[] xenonReactivityPcmValues = new double[xenonValues.length];
+        for (int i = 0; i < xenonValues.length; i++) xenonReactivityPcmValues[i] = -xenonValues[i] * 1.0e5;
+        xenonReactivityPcmSpread = FluxWeightedAverage.spread(xenonReactivityPcmValues);
+    }
+
+    /**
+     * Steps each fuel port's own local xenon/iodine ODE forward one tick using THIS tick's just-advanced
+     * {@link #pointKineticsState} -- the complementary post-advance half of
+     * {@link #updateLocalDopplerAndXenonReactivity()}, mirroring the pre-local-feedback ordering ({@code
+     * xenonIodineState = XenonIodineSolver.advance(xenonIodineState, pointKineticsState.relativeNeutronPopulation,
+     * ...)} ran after the point-kinetics advance, not before).
+     */
+    private void advanceLocalXenonStates() {
+        if (cmfdResult == null) return;
+        double globalRelativePower = pointKineticsState.relativeNeutronPopulation;
+        XenonIodineConstants xenonConstants = new XenonIodineConstants(ConfigHolder.reactor.xenonDeadTimeSeconds,
+                ConfigHolder.reactor.equilibriumXenonWorth);
+        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
+            ItemStack stack = fuelPort.getInsertedItem();
+            if (!(stack.getItem() instanceof ItemFuelRod fuelRod)) continue;
+
+            NodePosition topPosition = fuelPortTopPosition(fuelPort);
+            double fastFlux = cmfdResult.fastFlux().getOrDefault(topPosition, 0.0);
+            double thermalFlux = cmfdResult.thermalFlux().getOrDefault(topPosition, 0.0);
+            double localRelativePower = (fastFlux + thermalFlux) * globalRelativePower;
+
+            XenonIodineState localState = fuelRod.getLocalXenonIodineState(stack, xenonIodineState);
+            XenonIodineState advanced = XenonIodineSolver.advance(localState, localRelativePower, TICK_SECONDS,
+                    xenonConstants);
+            fuelRod.setLocalXenonIodineState(stack, advanced);
+        }
+    }
+
+    /**
+     * Axial (per-layer) local moderator-temperature-coefficient feedback -- see this mod's design memory for
+     * the full derivation. Unlike local Doppler/Xenon (radial, per fuel port), MTC varies primarily along the
+     * primary coolant's own flow direction (bottom to top of each channel): real PWR coolant genuinely heats up
+     * as it rises through the core, and this reactor's own CMFD geometry already resolves flux per axial layer
+     * (not just per channel), so the real local power shape at each layer is directly available.
+     * <p>
+     * Derivation, in three steps:
+     * <ol>
+     * <li>For each layer y, sum the raw fission source ({@code nuFission * flux}, both groups) across every
+     * fuel channel's own node at that specific y -- {@link ReactorNodeFactory#fuelNode} is a pure function of
+     * position and composition (no solve needed), so each fuel port's own node is reconstructed once and reused
+     * for every layer in its own column (the same "formal 3D, same composition repeated per layer" geometry
+     * {@link #buildReactorGeometry()} itself uses). Rescaling this raw per-layer sum so the reactor-wide total
+     * matches the existing global {@code ratedThermalPowerWatts * relativeNeutronPopulation} figure gives each
+     * layer's own local power in real Watts, consistent with the existing global energy accounting.</li>
+     * <li>Converts each layer's local power into a temperature <i>rise</i> via the textbook heat balance
+     * {@code deltaT = Q / (massFlowRate * specificHeat)} ({@code primaryCirculationRateKgPerSecond} /
+     * {@link CoolantThermalSolver#REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY}), then cumulatively sums bottom-to-top
+     * for the raw (shape-only) axial profile.</li>
+     * <li><b>Anchoring</b>: shifts that raw profile (a uniform offset, preserving its shape) so the
+     * thermal-flux-squared-weighted average of the shifted profile across every layer (fuel <i>and</i> control
+     * rod channel nodes alike -- coolant flows through both) exactly equals the existing bulk
+     * {@link #temperatureKelvin}. {@link #temperatureKelvin} is this reactor's own single lumped average, not
+     * specifically an inlet or outlet value, so anchoring the weighted <i>average</i> (not either endpoint) is
+     * the correct backward-compatible reference -- this does not change {@link #temperatureKelvin}'s own total
+     * mass/energy accounting (SCRAM threshold included) at all, it is purely a display/feedback-only overlay.
+     * </li>
+     * </ol>
+     * Each layer's own {@link ModeratorTemperatureReactivity#reactivityPcm} evaluation at its anchored
+     * temperature is then combined via the same thermal-flux-squared {@link FluxWeightedAverage} as every other
+     * local feedback term. Unlike local Doppler/Xenon, a perfectly radially-uniform core does <i>not</i> reduce
+     * this to the old flat-single-temperature value exactly (even uniform local power still produces a
+     * genuinely rising axial temperature profile as coolant flows through it, and {@link
+     * ModeratorTemperatureReactivity}'s own quadratic curve is not linear in that spread) -- the anchoring step
+     * is what preserves consistency with the existing accounting, not an exact-equality guarantee the way local
+     * Doppler/Xenon's radial averaging has.
+     */
+    private double computeLocalModeratorTemperatureReactivityPcm() {
+        if (cmfdResult == null || getWorld() == null) return 0.0;
+
+        List<NodePosition> fuelColumnPositions = new ArrayList<>();
+        List<ReactorNode> fuelColumnNodes = new ArrayList<>();
+        List<NodePosition> rodColumnPositions = new ArrayList<>();
+        Integer topWorldY = null;
+        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
+            FuelComposition composition = fuelPort.getLoadedComposition();
+            if (composition == null) continue;
+            NodePosition topPosition = fuelPortTopPosition(fuelPort);
+            fuelColumnPositions.add(topPosition);
+            fuelColumnNodes.add(ReactorNodeFactory.fuelNode(topPosition, composition));
+            topWorldY = fuelPort.getPos().getY();
+        }
+        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
+            BlockPos pos = controlRod.getPos();
+            rodColumnPositions.add(new NodePosition(pos.getX() - getPos().getX(), pos.getY() - getPos().getY(),
+                    pos.getZ() - getPos().getZ()));
+            topWorldY = pos.getY();
+        }
+        if (topWorldY == null || fuelColumnPositions.isEmpty()) return 0.0;
+
+        int bottomLocalY = (getPos().getY() - LAYERS_BELOW_CONTROLLER + 1) - getPos().getY();
+        int topLocalY = topWorldY - getPos().getY();
+        int layerCount = topLocalY - bottomLocalY + 1;
+        if (layerCount <= 0) return 0.0;
+
+        double[] layerRawFissionSource = new double[layerCount];
+        double[] layerThermalFluxSquaredSum = new double[layerCount];
+        double totalRawFissionSource = 0.0;
+        for (int y = bottomLocalY; y <= topLocalY; y++) {
+            int index = y - bottomLocalY;
+            double layerSum = 0.0;
+            for (int i = 0; i < fuelColumnPositions.size(); i++) {
+                NodePosition fuelXz = fuelColumnPositions.get(i);
+                NodePosition pos = new NodePosition(fuelXz.x(), y, fuelXz.z());
+                ReactorNode node = fuelColumnNodes.get(i);
+                double fastFlux = cmfdResult.fastFlux().getOrDefault(pos, 0.0);
+                double thermalFlux = cmfdResult.thermalFlux().getOrDefault(pos, 0.0);
+                layerSum += node.fast().nuFission() * fastFlux + node.thermal().nuFission() * thermalFlux;
+                layerThermalFluxSquaredSum[index] += thermalFlux * thermalFlux;
+            }
+            for (NodePosition rodXz : rodColumnPositions) {
+                NodePosition pos = new NodePosition(rodXz.x(), y, rodXz.z());
+                double thermalFlux = cmfdResult.thermalFlux().getOrDefault(pos, 0.0);
+                layerThermalFluxSquaredSum[index] += thermalFlux * thermalFlux;
+            }
+            layerRawFissionSource[index] = layerSum;
+            totalRawFissionSource += layerSum;
+        }
+        if (totalRawFissionSource <= 0.0) return 0.0;
+
+        double totalPowerWatts = computeRatedThermalPowerWatts() * pointKineticsState.relativeNeutronPopulation;
+        double massFlowRateKgPerSecond = ConfigHolder.reactor.primaryCirculationRateKgPerSecond;
+        if (massFlowRateKgPerSecond <= 0.0) return 0.0;
+
+        double[] rawProfileKelvin = new double[layerCount];
+        double cumulativeRise = 0.0;
+        for (int index = 0; index < layerCount; index++) {
+            double layerPowerWatts = totalPowerWatts * layerRawFissionSource[index] / totalRawFissionSource;
+            double layerRiseKelvin = layerPowerWatts /
+                    (massFlowRateKgPerSecond * CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY);
+            cumulativeRise += layerRiseKelvin;
+            rawProfileKelvin[index] = cumulativeRise;
+        }
+
+        double weightedAverageRawKelvin = FluxWeightedAverage.average(rawProfileKelvin, layerThermalFluxSquaredSum);
+        double anchorOffsetKelvin = temperatureKelvin - weightedAverageRawKelvin;
+
+        double[] mtcPcmPerLayer = new double[layerCount];
+        for (int index = 0; index < layerCount; index++) {
+            double anchoredKelvin = rawProfileKelvin[index] + anchorOffsetKelvin;
+            mtcPcmPerLayer[index] = ModeratorTemperatureReactivity.reactivityPcm(anchoredKelvin,
+                    AMBIENT_TEMPERATURE_KELVIN, ConfigHolder.reactor.heatupTargetTemperatureKelvin,
+                    ConfigHolder.reactor.moderatorTemperatureCoefficientPcmPerKelvin);
+        }
+        return FluxWeightedAverage.average(mtcPcmPerLayer, layerThermalFluxSquaredSum);
+    }
+
+    /**
+     * Which isotope becomes which on neutron capture without fission -- see {@link FuelBurnupEngine}'s own
+     * JavaDoc for why this mapping is deliberately NOT hardcoded inside that pure-function class itself (it must
+     * stay safely referenceable from unit tests, which never fire Forge's {@code MaterialEvent}), and is instead
+     * built here, in the gameplay layer, where {@link GTNLMaterials}' fields are guaranteed already populated by
+     * the time any reactor actually ticks.
+     */
+    @NotNull
+    private static Map<Element, Element> buildCaptureDaughters() {
+        Map<Element, Element> daughters = new HashMap<>();
+        daughters.put(Elements.U235, GTNLMaterials.Uranium236.getElement());
+        daughters.put(Elements.U238, Elements.Pu239);
+        daughters.put(Elements.Pu239, GTNLMaterials.Plutonium240.getElement());
+        return daughters;
+    }
+
+    /**
+     * Consumes each loaded fuel rod's own isotope inventory via {@link FuelBurnupEngine}, sampling the last CMFD
+     * solve's local flux at that fuel port's own top-of-channel node -- the "formal 3D" geometry repeats the same
+     * fuel composition at every layer of a channel (see {@link #buildReactorGeometry()}'s own JavaDoc), so a
+     * single flux sample per fuel port is a reasonable simplification, same spirit as
+     * {@link #aggregateFissionShares()}'s equal-weighting approximation. Runs every tick (unlike the rare CMFD
+     * shape recompute) using whichever {@link #cmfdResult} is currently cached -- flux shape changes slowly
+     * relative to burnup itself, so reusing a slightly stale flux distribution between shape recomputes is an
+     * acceptable quasi-static approximation, the same division of labor used everywhere else in this class.
+     */
+    private void updateFuelBurnup() {
+        if (cmfdResult == null || getWorld() == null) return;
+        double relativePower = pointKineticsState.relativeNeutronPopulation;
+        if (relativePower <= 0) return;
+        Map<Element, Element> captureDaughters = buildCaptureDaughters();
+        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
+            ItemStack stack = fuelPort.getInsertedItem();
+            if (!(stack.getItem() instanceof ItemFuelRod fuelRod)) continue;
+
+            NodePosition topPosition = fuelPortTopPosition(fuelPort);
+            double localFastFlux = cmfdResult.fastFlux().getOrDefault(topPosition, 0.0);
+            double localThermalFlux = cmfdResult.thermalFlux().getOrDefault(topPosition, 0.0);
+
+            Map<Element, Double> current = fuelRod.getIsotopeAmounts(stack);
+            Map<Element, Double> next = FuelBurnupEngine.advance(current, captureDaughters, localFastFlux,
+                    localThermalFlux, relativePower, ConfigHolder.reactor.fuelBurnupRateCoefficient, TICK_SECONDS);
+            fuelPort.setLoadedIsotopeAmounts(next);
+        }
+    }
+
+    /**
+     * Wears every loaded control rod by {@code controlRodWearRateCoefficient * insertionDepth * localThermalFlux *
+     * relativePower * dtSeconds} -- the approved "local neutron capture ~= CMFD thermal flux x power" approximation
+     * (2026-09-20 design decision, see this mod's design memory), scaled by how much of the rod is actually
+     * inserted into the flux region. Reuses the same per-rod {@link #cmfdResult} thermal-flux sample as
+     * {@link #sumControlRodReactivity()} -- a rod sitting withdrawn near 0 insertion depth barely wears regardless
+     * of local flux, matching the real-world pattern of load-following banks wearing much faster than banks left
+     * withdrawn at rated power. {@link MetaTileEntityControlRodController#applyWear} itself no-ops for an empty
+     * slot or a non-rod item, so this loop does not need to check that first.
+     */
+    private void updateControlRodWear() {
+        if (cmfdResult == null || getWorld() == null) return;
+        double relativePower = pointKineticsState.relativeNeutronPopulation;
+        if (relativePower <= 0) return;
+        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
+            BlockPos pos = controlRod.getPos();
+            NodePosition topPosition = new NodePosition(pos.getX() - getPos().getX(), pos.getY() - getPos().getY(),
+                    pos.getZ() - getPos().getZ());
+            double thermalFlux = cmfdResult.thermalFlux().getOrDefault(topPosition, 0.0);
+            double wear = ConfigHolder.reactor.controlRodWearRateCoefficient * controlRod.getInsertionDepth() *
+                    thermalFlux * relativePower * TICK_SECONDS;
+            controlRod.applyWear(wear);
+        }
+    }
+
+    /**
+     * Reference "cold shutdown" coolant temperature (K) -- both this reactor's own initial/reset value and
+     * {@code ReactorCoolantTemperatureBands}'s own band 0. Named here since {@link #updatePrimaryCirculation()}
+     * compares against it directly (gating the pump-out half on there actually being heat to move).
+     */
+    private static final double AMBIENT_TEMPERATURE_KELVIN = 300.0;
+
+    /**
+     * Advances {@link #fuelTemperatureKelvin} and {@link #temperatureKelvin} by one tick -- the fuel node
+     * generates fission heat and sheds it to the coolant node via a size-scaled UA, the coolant node in turn
+     * physically circulates to/from a piped heat exchanger (if any) and checks its own subcooling margin. See
+     * this mod's design memory (2026-09-22) for why fuel and coolant are separate nodes: a real meltdown is a
+     * "fuel heats up faster than coolant can carry the heat away" phenomenon that a single shared temperature
+     * cannot represent.
+     */
+    private void updateFuelAndCoolantThermal() {
+        // Root-caused 2026-09-25 (real-playtest-driven, see this mod's design memory): repeated floating-point
+        // subtraction in updatePrimaryCirculation() can leave coolantMassKg as a tiny nonzero residual (observed:
+        // ~3.7e-11 kg) instead of landing on exactly 0.0 once the primary loop genuinely runs dry (e.g. a
+        // physically-stalled return circulation). Because computeFuelCoolantSubSteps()/CoolantThermalSolver#advance
+        // both gate on a bare "> 0" check, that residual was treated as real coolant with an astronomically tiny
+        // heat capacity, driving the required sub-step count past Integer.MAX_VALUE (confirmed via diagnostic
+        // logging: subSteps saturated at 2147483647, ~12-13 SECONDS per tick, and fuelTemperatureKelvin/
+        // temperatureKelvin both NaN). Snapping any sub-milligram residue to exactly 0.0 here lets the existing
+        // "zero heat capacity is excluded" guards in both those call sites work as originally intended.
+        if (coolantMassKg < 1.0e-6) coolantMassKg = 0.0;
+
+        double fissionPowerWatts = computeRatedThermalPowerWatts() * pointKineticsState.relativeNeutronPopulation;
+        double rcpHeatWatts = updateReactorPowerConsumption();
+        double totalFuelMassKg = computeTotalCoreFuelMassKg();
+        double fuelHeatCapacity = totalFuelMassKg * FuelThermalConstants.SPECIFIC_HEAT_CAPACITY_J_PER_KG_KELVIN;
+        double coolantHeatCapacity = coolantMassKg * CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY;
+        double fuelCoolantUA = computeFuelCoolantUA();
+
+        int subSteps = FuelCoolantSubstepping.subStepCount(fuelCoolantUA, fuelHeatCapacity, coolantHeatCapacity,
+                TICK_SECONDS);
+        double subDtSeconds = TICK_SECONDS / subSteps;
+        for (int i = 0; i < subSteps; i++) {
+            double transferWatts = fuelCoolantUA * (fuelTemperatureKelvin - temperatureKelvin);
+            FuelTemperatureStep.Result step = FuelTemperatureStep.advance(fuelTemperatureKelvin, meltedFuelMassKg,
+                    coreFuelMassAtMeltdownStartKg, fissionPowerWatts, transferWatts, totalFuelMassKg,
+                    fuelHeatCapacity, subDtSeconds);
+            fuelTemperatureKelvin = step.fuelTemperatureKelvin();
+            meltedFuelMassKg = step.meltedFuelMassKg();
+            coreFuelMassAtMeltdownStartKg = step.coreFuelMassAtMeltdownStartKg();
+            temperatureKelvin = CoolantThermalSolver.advance(temperatureKelvin, transferWatts + rcpHeatWatts,
+                    coolantMassKg, CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY, subDtSeconds);
+        }
+
+        updatePrimaryCirculation();
+        applyCoolantSubcoolingClamp();
+        markDirty();
+    }
+
+    /**
+     * Draws this tick's EU/t for the reactor's own instrumentation and coolant pump loads (see
+     * {@link ReactorPowerConsumption}'s own JavaDoc for the two-term formula) from whatever
+     * {@link MultiblockAbility#INPUT_ENERGY} hatch(es) are piped in, then converts the actually-drawn pump
+     * portion (not the baseline instrumentation load, which represents non-heat-generating electronics) into
+     * real Watts via {@code ConfigHolder.reactor.euPerTickToWattsConversion} -- modeling reactor coolant pump
+     * friction heat entering the coolant directly, added 2026-09-28 (real-PWR-data-driven, see this mod's design
+     * memory). This is a real, continuous physical process in an actual RCP, not exclusive to pre-criticality
+     * heatup, so it applies identically regardless of {@link #operatingState}.
+     * <p>
+     * The pump load itself runs at full rated draw -- rather than scaling down with
+     * {@link PointKineticsState#relativeNeutronPopulation} the way it does once {@code STARTUP}/{@code OPERATING}
+     * -- while {@code SHUTDOWN} and still below {@code ConfigHolder.reactor.heatupTargetTemperatureKelvin}: a
+     * real RCP runs near rated flow well before criticality specifically to heat up via friction, not because
+     * there is yet any reactor heat to actually remove. If the connected hatch(es) cannot supply the full
+     * desired amount, both terms simply draw whatever is available (capped, never negative) -- an underpowered
+     * reactor heats up slower and generates less pump friction heat, rather than erroring.
+     *
+     * @return heat (W) actually delivered to the coolant this tick from the pump's own actually-drawn energy
+     */
+    private double updateReactorPowerConsumption() {
+        IEnergyContainer energyContainer = new EnergyContainerList(getAbilities(MultiblockAbility.INPUT_ENERGY));
+        int interiorCellCount = interiorCellsPerLayer * totalHeightLayers();
+        double ratedThermalPowerWatts = computeRatedThermalPowerWatts();
+
+        boolean heatupActive = operatingState.stage == ReactorOperatingStage.SHUTDOWN &&
+                temperatureKelvin < ConfigHolder.reactor.heatupTargetTemperatureKelvin;
+        double effectiveThermalOutputWatts = heatupActive ? ratedThermalPowerWatts :
+                ratedThermalPowerWatts * pointKineticsState.relativeNeutronPopulation;
+
+        long baseDesiredEuPerTick = Math.round(ReactorPowerConsumption.basePowerEuPerTick(interiorCellCount,
+                ConfigHolder.reactor.baseConsumptionPerChannel));
+        double pumpCoefficient = RatedCoolantMass.ratedMassKg(interiorCellCount,
+                ConfigHolder.reactor.pumpConsumptionPerInteriorCellAtRatedOutput);
+        long pumpDesiredEuPerTick = Math.round(ReactorPowerConsumption.pumpPowerEuPerTick(effectiveThermalOutputWatts,
+                ratedThermalPowerWatts, pumpCoefficient));
+
+        long baseDrawnEuPerTick = ReactorPowerConsumption.drawEnergy(energyContainer, baseDesiredEuPerTick);
+        long pumpDrawnEuPerTick = ReactorPowerConsumption.drawEnergy(energyContainer, pumpDesiredEuPerTick);
+        totalPowerConsumptionEuPerTick = baseDrawnEuPerTick + pumpDrawnEuPerTick;
+        pumpPowerUnavailable = pumpDesiredEuPerTick > 0 && pumpDrawnEuPerTick <= 0;
+
+        return pumpDrawnEuPerTick * ConfigHolder.reactor.euPerTickToWattsConversion;
+    }
+
+    /**
+     * Pumps hot primary coolant out to a piped heat exchanger's {@code REACTOR_COOLANT_IMPORT} hatch (via this
+     * reactor's own, previously-unused {@code REACTOR_COOLANT_EXPORT} hatch), then drains whatever cooled coolant
+     * has returned to this reactor's own {@code REACTOR_COOLANT_IMPORT} hatch, mixing it in by mass-weighted
+     * temperature average. A no-op both ways with no heat exchanger piped in (the export tank fills up and stays
+     * full, the import tank has nothing new to drain) -- degrading to this mod's previous "no heat removal path"
+     * behavior automatically, no special-casing needed. See this mod's design memory (2026-09-22): primary
+     * coolant circulates via real fluid pipes, not a logical link, so the reactor never needs to know whether a
+     * heat exchanger exists at all.
+     * <p>
+     * Temperature is carried across the fluid boundary via
+     * {@link GTNLMaterials#nearestReactorCoolantBandFluid}/{@link Fluid#getTemperature()} (a discrete, per-type
+     * property), not {@code FluidStack} NBT -- see
+     * {@code ReactorCoolantTemperatureBands}'s own JavaDoc for why an NBT tag that changes every tick is
+     * fundamentally incompatible with Forge/GT's exact-match fluid merging (confirmed via a real playtest report,
+     * 2026-09-22, of circulation silently stalling). The pump-out half only runs while {@link #temperatureKelvin}
+     * is actually above ambient -- otherwise (no fuel, cold shutdown) there is nothing to circulate, and running
+     * it anyway just dumps freshly-injected coolant into the export hatch with nothing to return it (confirmed via
+     * a real playtest report, 2026-09-22, of injected coolant appearing to vanish). The return-drain half always
+     * runs regardless -- whatever comes back is always worth accepting -- but is capped at this reactor's own
+     * rated capacity ({@link #computeRatedCoolantMassKg()}), same as {@link #updateCoolantInjection()}'s own cap:
+     * a closed loop's returning flow should never exceed a full tank, and without this cap a player continuously
+     * pouring fresh coolant into the import hatch by hand (not at all the same thing as genuine circulated
+     * return-flow, but indistinguishable from it at this hatch) could grow {@link #coolantMassKg} without bound
+     * (confirmed via a real playtest report, 2026-09-22: coolant reaching over 20x rated capacity).
+     * <p>
+     * The pump-out half is further capped 2026-09-25 (real-playtest-driven, see this mod's design memory) to
+     * never drain {@link #coolantMassKg} below {@code ConfigHolder.reactor.locaCoolantFraction} of
+     * {@link #computeRatedCoolantMassKg()} -- reusing the same threshold {@link LOCADetector} already trips a
+     * SCRAM on, rather than introducing a separate concept. Without this floor, pump-out starts at full budget
+     * the instant {@link #temperatureKelvin} first crosses ambient with no ramp-up, and a real playtest log
+     * showed this alone empties a full-rated reactor (445,588 kg) in ~16 seconds -- faster than a piped heat
+     * exchanger's return flow could plausibly prime over any non-trivial pipe run, driving coolantMassKg to a
+     * near-zero floating-point residue and, before the fix backing this, a multi-second-per-tick server stall.
+     */
+    private void updatePrimaryCirculation() {
+        primaryCirculationFlowMb = 0;
+        int budgetMb = (int) Math.round(ConfigHolder.reactor.primaryCirculationRateKgPerSecond * TICK_SECONDS *
+                1000.0);
+        if (budgetMb <= 0) return;
+
+        if (temperatureKelvin > AMBIENT_TEMPERATURE_KELVIN) {
+            double minRetainedCoolantKg = ConfigHolder.reactor.locaCoolantFraction * computeRatedCoolantMassKg();
+            double availableToExportKg = Math.max(0.0, coolantMassKg - minRetainedCoolantKg);
+            int pumpedMb = Math.min(budgetMb, (int) Math.round(availableToExportKg * 1000.0));
+            if (pumpedMb > 0) {
+                Fluid outgoingFluid = GTNLMaterials.nearestReactorCoolantBandFluid(temperatureKelvin);
+                int filledMb = 0;
+                for (IFluidTank tank : getAbilities(GTNLMultiblockAbility.REACTOR_COOLANT_EXPORT)) {
+                    if (filledMb >= pumpedMb) break;
+                    filledMb += tank.fill(new FluidStack(outgoingFluid, pumpedMb - filledMb), true);
+                }
+                if (filledMb > 0) coolantMassKg -= filledMb / 1000.0;
+                primaryCirculationFlowMb = filledMb;
+            }
+        }
+
+        double headroomKg = Math.max(0.0, computeRatedCoolantMassKg() - coolantMassKg);
+        int drainBudgetMb = Math.min(budgetMb, (int) Math.round(headroomKg * 1000.0));
+        int drainedMb = 0;
+        for (IFluidTank tank : getAbilities(GTNLMultiblockAbility.REACTOR_COOLANT_IMPORT)) {
+            if (drainedMb >= drainBudgetMb) break;
+            FluidStack drained = tank.drain(drainBudgetMb - drainedMb, true);
+            if (drained == null || drained.amount <= 0) continue;
+            double drainedTemperatureKelvin = drained.getFluid().getTemperature();
+            double drainedMassKg = drained.amount / 1000.0;
+            temperatureKelvin = CoolantThermalSolver.mixTemperatures(coolantMassKg, temperatureKelvin,
+                    drainedMassKg, drainedTemperatureKelvin);
+            coolantMassKg += drainedMassKg;
+            drainedMb += drained.amount;
+        }
+    }
+
+    /**
+     * Checked once per tick, after {@link #temperatureKelvin} has already been advanced through the fuel-coolant
+     * coupling sub-step loop in {@link #updateFuelAndCoolantThermal()}: once {@link #temperatureKelvin} is at or
+     * above the primary loop's own saturation temperature at its current {@link #pressureMPa} (see
+     * {@link WaterSaturationCurve}, written with exactly this "PWR primary coolant should stay subcooled" case in
+     * mind), clamps it there and converts the excess energy into {@link #primaryVoidFraction} via water's latent
+     * heat of vaporization instead -- the third instance of this mod's phase-change-plateau pattern (fuel
+     * melting, this, and the secondary loop's own boiling). Below saturation, {@link #primaryVoidFraction}
+     * instead decays back toward 0 (condensing), never instantly.
+     */
+    private void applyCoolantSubcoolingClamp() {
+        double saturationTemperatureKelvin = WaterSaturationCurve.saturationTemperature(pressureMPa * 1.0e6);
+        if (temperatureKelvin >= saturationTemperatureKelvin && coolantMassKg > 0) {
+            double excessJoules = (temperatureKelvin - saturationTemperatureKelvin) * coolantMassKg *
+                    CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY;
+            temperatureKelvin = saturationTemperatureKelvin;
+            primaryVoidFraction = Math.min(1.0, primaryVoidFraction +
+                    excessJoules / (coolantMassKg * SteamProperties.LATENT_HEAT_OF_VAPORIZATION_J_PER_KG));
+        } else {
+            primaryVoidFraction = Math.max(0.0,
+                    primaryVoidFraction - ConfigHolder.reactor.voidCondenseRatePerSecond * TICK_SECONDS);
+        }
+    }
+
+    /**
+     * Radially flux-squared-weighted sum of every control rod controller's own {@link ControlRodWorth#reactivity}
+     * -- see this mod's design memory for the full local-feedback derivation. Weighting by {@link #cmfdResult}'s
+     * own thermal flux at each rod's own channel position (not equally, as the old flat sum implicitly did)
+     * means a rod in a higher-flux (typically more central) channel now correctly matters more than one in a
+     * lower-flux (typically edge) channel. {@link ControlRodWorth}'s own cosine curve is left completely
+     * untouched -- it already captures the <i>axial</i> worth shape (see that class's own JavaDoc: it is itself
+     * derived from integrating a flux-squared axial mode shape over the inserted depth), so only the
+     * <i>radial</i> (rod-to-rod) weighting is new here. Only called from {@link #updatePhysicsAmplitude()},
+     * always after that method's own {@code cmfdResult == null} guard, so {@link #cmfdResult} is always
+     * non-null here.
+     * <p>
+     * {@code FluxWeightedAverage.average(...) * rodCount} is the weighted-sum-normalized-by-mean-weight form
+     * (see {@link FluxWeightedAverage}'s own JavaDoc): whenever every rod happens to sit at the same local
+     * thermal flux (a symmetric core, the implicit assumption the old flat sum made), this reduces to exactly
+     * the old {@code Σ_rods ControlRodWorth.reactivity(...)} sum.
+     */
+    private double sumControlRodReactivity() {
+        List<Double> values = new ArrayList<>();
+        List<Double> weights = new ArrayList<>();
+        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
+            BlockPos pos = controlRod.getPos();
+            NodePosition topPosition = new NodePosition(pos.getX() - getPos().getX(), pos.getY() - getPos().getY(),
+                    pos.getZ() - getPos().getZ());
+            double thermalFlux = cmfdResult.thermalFlux().getOrDefault(topPosition, 0.0);
+            values.add(ControlRodWorth.reactivity(controlRod.getInsertionDepth(), controlRod.getMaxWorthReactivity()));
+            weights.add(thermalFlux * thermalFlux);
+        }
+        if (values.isEmpty()) return 0.0;
+        double[] valuesArray = new double[values.size()];
+        double[] weightsArray = new double[weights.size()];
+        for (int i = 0; i < values.size(); i++) {
+            valuesArray[i] = values.get(i);
+            weightsArray[i] = weights.get(i);
+        }
+        return FluxWeightedAverage.average(valuesArray, weightsArray) * valuesArray.length;
+    }
+
+    /**
+     * Sum of {@code maxWorthReactivity} (fraction units) across every currently-loaded control rod controller
+     * assigned to {@code bankId} -- the bank's own total capacity, not its currently-applied reactivity (see
+     * {@link #sumControlRodReactivity()} for that). Read by {@link ReactorAutoControlSequencer} (via
+     * {@link AutoControlHost}) to derive a reactivity target from whatever rod worth this specific reactor
+     * actually has built, rather than a flat constant that only happened to fit one reference reactor
+     * (2026-09-29, see this mod's design memory on replacing magic constants with values computed from the
+     * actually-built structure wherever the underlying quantity is not itself a real physical constant).
+     */
+    @Override
+    public double getBankTotalWorthReactivity(int bankId) {
+        double sum = 0.0;
+        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
+            if (controlRod.getBankId() == bankId) sum += controlRod.getMaxWorthReactivity();
+        }
+        return sum;
+    }
+
+    /** {@link AutoControlHost#getAverageControlRodInsertionPercent()}: average over every control rod, any bank. */
+    @Override
+    public double getAverageControlRodInsertionPercent() {
+        return controlRodSummaries.stream().mapToDouble(summary -> summary.insertionDepth() * 100.0)
+                .average().orElse(0.0);
+    }
+
+    /** {@link AutoControlHost#getBank0AverageInsertionFraction()}: average over bank 0's own control rods only. */
+    @Override
+    public double getBank0AverageInsertionFraction() {
+        return controlRodSummaries.stream().filter(summary -> summary.bankId() == 0)
+                .mapToDouble(ControlRodSummary::insertionDepth).average().orElse(0.0);
+    }
+
+    /** A control rod at or above this insertion depth counts as "fully inserted" for {@link #isShutdownComplete()}. */
+    private static final double FULLY_INSERTED_THRESHOLD = 0.999;
+
+    /**
+     * Console write-direction command: request the reactor begin startup. No-op unless currently
+     * {@link ReactorOperatingStage#SHUTDOWN} -- see {@link ReactorOperatingEvaluator#beginStartup} -- and
+     * {@link #isStartupReady()} (stage 6 of this mod's startup/shutdown sequence work, 2026-09-21: the plant must
+     * actually be physically prepared -- filled, pressurized, AND (added 2026-09-28, mirroring a real PWR's own
+     * pre-criticality heatup and Tech-Spec-enforced minimum criticality temperature) heated up -- first). Boron/
+     * control rod adjustment are deliberately not preconditions here -- they happen within the STARTUP stage
+     * itself, not before entering it.
+     */
+    public void requestStartup() {
+        if (!isStartupReady()) return;
+        applyOperatingStateChange(ReactorOperatingEvaluator.beginStartup(operatingState));
+    }
+
+    /** See {@link #requestStartup()}'s own JavaDoc. */
+    private boolean isStartupReady() {
+        if (coolantMassKg < computeRatedCoolantMassKg() * ConfigHolder.reactor.startupCoolantReadyFraction) {
+            return false;
+        }
+        if (pressureMPa < ConfigHolder.reactor.targetOperatingPressureMPa *
+                ConfigHolder.reactor.startupPressureReadyFraction) {
+            return false;
+        }
+        return temperatureKelvin >= ConfigHolder.reactor.heatupTargetTemperatureKelvin *
+                ConfigHolder.reactor.startupHeatupReadyFraction;
+    }
+
+    /** Console write-direction command: request a planned shutdown. No-op unless currently {@code OPERATING}. */
+    public void requestShutdown() {
+        applyOperatingStateChange(ReactorOperatingEvaluator.beginShutdown(operatingState));
+    }
+
+    /** Console write-direction command: the only way out of {@code TRIPPED}. No-op unless currently tripped. */
+    public void requestManualReset() {
+        applyOperatingStateChange(ReactorOperatingEvaluator.manualReset(operatingState));
+    }
+
+    /** Console write-direction command: manual SCRAM button. See {@link #checkScramConditions()} for the rest. */
+    public void requestManualScram() {
+        applyOperatingStateChange(ReactorOperatingEvaluator.scram(operatingState, ScramReason.MANUAL));
+    }
+
+    /**
+     * Console write-direction command: begin (or resume) primary coolant injection -- stage 2 of this mod's
+     * startup/shutdown sequence work (2026-09-21). A no-op unless {@link #coolantMassKg} is at or below
+     * {@code ConfigHolder.reactor.coolantInjectionTriggerFraction} of {@link #computeRatedCoolantMassKg()} --
+     * this intentionally does not distinguish a true first-ever startup from a post-maintenance restart (see
+     * this mod's design memory, 2026-09-21): whichever the case, "coolant is currently low" is exactly the
+     * condition that makes injection meaningful, and it falls out of this same check either way (a fresh reactor
+     * simply starts at 0 kg, trivially satisfying it).
+     */
+    public void requestBeginCoolantInjection() {
+        if (!coolantInjectionActive && coolantMassKg <= computeRatedCoolantMassKg() *
+                ConfigHolder.reactor.coolantInjectionTriggerFraction) {
+            coolantInjectionActive = true;
+            writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+            markDirty();
+        }
+    }
+
+    /**
+     * While {@link #coolantInjectionActive}, drains available fluid from the reactor coolant import and
+     * emergency coolant import hatches' tanks (whichever ability instances happen to be placed -- basic or
+     * advanced hatch variants alike, both register under the same {@link GTNLMultiblockAbility#REACTOR_COOLANT_IMPORT}/
+     * {@link GTNLMultiblockAbility#EMERGENCY_COOLANT_IMPORT} abilities), rate-limited by
+     * {@code ConfigHolder.reactor.coolantInjectionRateKgPerSecond}, converting 1000 mB to 1 kg. Auto-clears
+     * {@link #coolantInjectionActive} once {@link #coolantMassKg} reaches {@link #computeRatedCoolantMassKg()}.
+     */
+    private void updateCoolantInjection() {
+        if (!coolantInjectionActive) return;
+        double currentRatedCoolantMassKg = computeRatedCoolantMassKg();
+        if (coolantMassKg >= currentRatedCoolantMassKg) {
+            coolantInjectionActive = false;
+            writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+            markDirty();
+            return;
+        }
+
+        double budgetKg = Math.min(ConfigHolder.reactor.coolantInjectionRateKgPerSecond * TICK_SECONDS,
+                currentRatedCoolantMassKg - coolantMassKg);
+        int budgetMb = (int) Math.round(budgetKg * 1000.0);
+        if (budgetMb <= 0) {
+            // The remaining deficit is sub-mb (below the fluid API's own integer precision), so it can never be
+            // closed by draining -- snap directly to the target instead of leaving coolantInjectionActive stuck
+            // on forever (confirmed via a real playtest, 2026-09-26: COOLANT showed 445588265/445588265 mb yet
+            // still displayed "(INJECTING)" indefinitely).
+            coolantMassKg = currentRatedCoolantMassKg;
+            coolantInjectionActive = false;
+            writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+            markDirty();
+            return;
+        }
+
+        int drainedMb = 0;
+        for (MultiblockAbility<IFluidTank> ability : Arrays.asList(GTNLMultiblockAbility.REACTOR_COOLANT_IMPORT,
+                GTNLMultiblockAbility.EMERGENCY_COOLANT_IMPORT)) {
+            for (IFluidTank tank : getAbilities(ability)) {
+                if (drainedMb >= budgetMb) break;
+                FluidStack drained = tank.drain(budgetMb - drainedMb, true);
+                if (drained != null) drainedMb += drained.amount;
+            }
+        }
+        if (drainedMb > 0) {
+            coolantMassKg += drainedMb / 1000.0;
+            markDirty();
+        }
+    }
+
+    /**
+     * Console write-direction command: begin (or resume) raising {@link #pressureMPa} toward
+     * {@code ConfigHolder.reactor.targetOperatingPressureMPa}. Stage 3 of this mod's startup/shutdown sequence
+     * work (2026-09-21), deliberately provisional -- see that config field's own comment for why. A no-op if
+     * already at or above the target (matches {@link #requestBeginCoolantInjection()}'s own idle-no-op style).
+     */
+    public void requestBeginPressurization() {
+        if (pressureMPa < ConfigHolder.reactor.targetOperatingPressureMPa) {
+            pressurizationActive = true;
+            depressurizationActive = false;
+            writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+            markDirty();
+        }
+    }
+
+    /** As {@link #requestBeginPressurization()}, ramping {@link #pressureMPa} down toward 0 instead. */
+    public void requestBeginDepressurization() {
+        if (pressureMPa > 0) {
+            depressurizationActive = true;
+            pressurizationActive = false;
+            writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+            markDirty();
+        }
+    }
+
+    /**
+     * While {@link #pressurizationActive}/{@link #depressurizationActive}, ramps {@link #pressureMPa} toward its
+     * target at {@code ConfigHolder.reactor.pressureAdjustmentRateMPaPerSecond}, auto-clearing the active flag
+     * once reached -- no fluid/hatch interaction at all (unlike coolant injection), consistent with pressure
+     * being a plain operator-managed status value rather than physically simulated (see this mod's design
+     * memory); unrelated to the secondary loop this stage is deliberately not waiting on.
+     */
+    private void updatePressureAdjustment() {
+        double rateThisTick = ConfigHolder.reactor.pressureAdjustmentRateMPaPerSecond * TICK_SECONDS;
+        if (pressurizationActive) {
+            double target = ConfigHolder.reactor.targetOperatingPressureMPa;
+            pressureMPa = Math.min(pressureMPa + rateThisTick, target);
+            if (pressureMPa >= target) {
+                pressurizationActive = false;
+                writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+            }
+            markDirty();
+        } else if (depressurizationActive) {
+            pressureMPa = Math.max(pressureMPa - rateThisTick, 0.0);
+            if (pressureMPa <= 0) {
+                depressurizationActive = false;
+                writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+            }
+            markDirty();
+        }
+    }
+
+    /**
+     * Console write-direction command: toggle boron dilution (distilled water injection). Stage 4 of this mod's
+     * startup/shutdown sequence work (2026-09-21). Unlike {@link #requestBeginCoolantInjection()}/
+     * {@link #requestBeginPressurization()}, this has no auto-stop target -- calling it again while already
+     * active turns it back off, matching how a real operator dilutes/concentrates by feel rather than toward a
+     * fixed setpoint.
+     */
+    public void requestToggleBoronDilution() {
+        boronDilutionActive = !boronDilutionActive;
+        if (boronDilutionActive) boronConcentrationActive = false;
+        writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+        markDirty();
+    }
+
+    /** As {@link #requestToggleBoronDilution()}, toggling boron concentration (boric acid injection) instead. */
+    public void requestToggleBoronConcentration() {
+        boronConcentrationActive = !boronConcentrationActive;
+        if (boronConcentrationActive) boronDilutionActive = false;
+        writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+        markDirty();
+    }
+
+    /**
+     * While {@link #boronDilutionActive}/{@link #boronConcentrationActive}, consumes distilled water/boric acid
+     * solution from the corresponding import hatch and exports an equal volume of radioactive wastewater (see
+     * this mod's design memory, 2026-09-17: letdown volume always matches input volume, so
+     * {@link #coolantMassKg} itself never changes from this operation -- only {@link #boronPpm} does), applying
+     * the mass-balance formula {@code newPpm = (oldPpm*coolantMassKg + inputPpm*inputMassKg) /
+     * (coolantMassKg+inputMassKg)} already decided for this mod (2026-09-17), confirmed still authoritative over
+     * a since-superseded "letdown carries the pre-injection concentration" description in the same design
+     * decision (2026-09-21). The operative rate is derived fresh from {@link #computeRatedCoolantMassKg()} and
+     * {@code ConfigHolder.reactor.boronAdjustmentDurationMinutes} -- see that field's own JavaDoc for why a
+     * time-based knob (rather than a flat mb/s rate calibrated for one specific reactor size) is used -- then
+     * scaled by {@link ReactorAutoControlSequencer#getBoronAdjustmentRateFraction()} (see that method's own
+     * JavaDoc) and finally capped by
+     * whichever is smaller: available input fluid, or free space in the wastewater export tank (draining more
+     * input than could actually be exported would silently destroy volume).
+     */
+    private void updateBoronAdjustment() {
+        if (!boronDilutionActive && !boronConcentrationActive) return;
+        MultiblockAbility<IFluidTank> importAbility = boronDilutionActive ? GTNLMultiblockAbility.PURE_WATER_IMPORT :
+                GTNLMultiblockAbility.BORIC_ACID_IMPORT;
+        double inputConcentrationPpm = boronDilutionActive ? 0.0 :
+                ConfigHolder.reactor.boricAcidSolutionConcentrationPpm;
+
+        double rateKgPerSecond = computeRatedCoolantMassKg() /
+                (ConfigHolder.reactor.boronAdjustmentDurationMinutes * 60.0) *
+                autoControlSequencer.getBoronAdjustmentRateFraction();
+        int budgetMb = (int) Math.round(rateKgPerSecond * TICK_SECONDS * 1000.0);
+        if (budgetMb <= 0) return;
+
+        int exportHeadroomMb = 0;
+        for (IFluidTank tank : getAbilities(GTNLMultiblockAbility.RADIOACTIVE_WASTEWATER_EXPORT)) {
+            FluidStack existing = tank.getFluid();
+            exportHeadroomMb += tank.getCapacity() - (existing != null ? existing.amount : 0);
+        }
+        budgetMb = Math.min(budgetMb, exportHeadroomMb);
+        if (budgetMb <= 0) return;
+
+        int drainedMb = 0;
+        for (IFluidTank tank : getAbilities(importAbility)) {
+            if (drainedMb >= budgetMb) break;
+            FluidStack drained = tank.drain(budgetMb - drainedMb, true);
+            if (drained != null) drainedMb += drained.amount;
+        }
+        if (drainedMb <= 0) return;
+
+        int remainingToExport = drainedMb;
+        for (IFluidTank tank : getAbilities(GTNLMultiblockAbility.RADIOACTIVE_WASTEWATER_EXPORT)) {
+            if (remainingToExport <= 0) break;
+            remainingToExport -= tank.fill(
+                    new FluidStack(GTNLMaterials.RadioactiveWastewater.getFluid(), remainingToExport), true);
+        }
+
+        double inputMassKg = drainedMb / 1000.0;
+        boronPpm = (boronPpm * coolantMassKg + inputConcentrationPpm * inputMassKg) / (coolantMassKg + inputMassKg);
+        markDirty();
+    }
+
+    /**
+     * Experimental (2026-09-24, balance-tuning tooling; scope widened 2026-09-26; extracted into
+     * {@link ReactorAutoControlSequencer} 2026-10-06, see this mod's design memory on this class's own
+     * decomposition): console write-direction command toggling the whole automatic control loop on/off.
+     */
+    public void requestToggleAutoRodControl() {
+        autoControlSequencer.toggleActive();
+        writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+        markDirty();
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public boolean isAutoRodControlActive() {
+        return autoControlSequencer.isActive();
+    }
+
+    /**
+     * Drives {@link #autoControlSequencer} one tick, then (since telemetry needs dozens of getters spanning
+     * every reactor subsystem, not just auto-control state -- see {@link ReactorAutoControlSequencer}'s own
+     * JavaDoc) logs the resulting action label to {@link #telemetryLogger} whenever that sequencer actually made
+     * a rod-nudging decision this tick (as opposed to still counting down toward its next one).
+     */
+    private void updateAutoControl() {
+        String action = autoControlSequencer.update(this);
+        if (action == null) return;
+        if (telemetryLogger == null) telemetryLogger = ReactorTelemetryLogger.open(getPos());
+        telemetryLogger.logRow(autoControlSequencer.getElapsedSeconds(), this, action);
+    }
+
+    private void applyOperatingStateChange(@NotNull ReactorOperatingState next) {
+        if (next != operatingState) {
+            operatingState = next;
+            writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+            markDirty();
+        }
+    }
+
+    /**
+     * The two automatic (non-operator-command) stage transitions plus every non-manual SCRAM trigger, both now
+     * delegated to {@link #scramEvaluator} (extracted 2026-10-06, see this mod's design memory). Checked every
+     * tick. {@link #isShutdownComplete()}/{@link #hasActiveConsoleLink()}/{@link #isWorldBlockPowered()} stay
+     * host-side -- {@link ScramHost}'s own JavaDoc on why.
+     */
+    private void checkAutomaticStageTransitions() {
+        applyOperatingStateChange(scramEvaluator.checkAutomaticStageTransitions(this, operatingState));
+    }
+
+    @Override
+    public boolean isShutdownComplete() {
+        if (pointKineticsState.relativeNeutronPopulation >= ConfigHolder.reactor.shutdownCompletePowerThreshold) {
+            return false;
+        }
+        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
+            if (controlRod.getInsertionDepth() < FULLY_INSERTED_THRESHOLD) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** See {@link #checkAutomaticStageTransitions()}'s own JavaDoc. */
+    private void checkScramConditions() {
+        ratedCoolantMassKg = computeRatedCoolantMassKg();
+        applyOperatingStateChange(scramEvaluator.checkScramConditions(this, operatingState));
+    }
+
+    @Override
+    public boolean isWorldBlockPowered() {
+        return getWorld().isBlockPowered(getPos());
+    }
+
+    /**
+     * Advances {@link #severeAccidentState} by one tick via {@link #accidentTracker} (extracted 2026-10-06, see
+     * this mod's design memory) -- deliberately independent of {@link #operatingState}: SCRAM tripping does not
+     * by itself resolve an ongoing LOCA/void condition (decay heat continues after shutdown), matching real
+     * accident progression.
+     */
+    private void updateSevereAccidentState() {
+        SevereAccidentStage previousStage = severeAccidentState.stage;
+        severeAccidentState = accidentTracker.advance(this, severeAccidentState);
+
+        if (severeAccidentState.stage != previousStage) {
+            writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+            markDirty();
+            // Edge-triggered exactly once, the single tick the stage flips into EXPLOSION -- SevereAccidentEvaluator
+            // itself treats EXPLOSION as a terminal/absorbing state (see its own JavaDoc), so this can never fire
+            // again for the same accident.
+            if (previousStage != SevereAccidentStage.EXPLOSION &&
+                    severeAccidentState.stage == SevereAccidentStage.EXPLOSION) {
+                triggerExplosion(new SevereAccidentConstants(ConfigHolder.reactor.explosionMeltFractionThreshold,
+                        ConfigHolder.reactor.explosionMagnitudeCoefficient));
+            }
+        }
+    }
+
+    /**
+     * Fires the actual in-world consequence of reaching {@link SevereAccidentStage#EXPLOSION} -- a vanilla/Forge
+     * explosion at this reactor's own position, strength derived from {@link SevereAccidentState#explosionMagnitude}
+     * (itself already a gameplay-balance formula, see its own JavaDoc) scaled and capped into Minecraft's own
+     * explosion-strength units via {@code ConfigHolder.reactor.explosionStrengthScale}/{@code maxExplosionStrength}.
+     */
+    private void triggerExplosion(@NotNull SevereAccidentConstants accidentConstants) {
+        double magnitude = severeAccidentState.explosionMagnitude(meltedFuelMassKg, accidentConstants);
+        float strength = (float) Math.min(magnitude * ConfigHolder.reactor.explosionStrengthScale,
+                ConfigHolder.reactor.maxExplosionStrength);
+        BlockPos pos = getPos();
+        getWorld().newExplosion(null, pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, strength, false,
+                ConfigHolder.reactor.explosionDestroysBlocks);
+    }
+
+    /**
+     * Unlike {@link #checkScramConditions()}'s change-triggered sync, {@link #pointKineticsState}/
+     * {@link #totalReactivity}/{@link #xenonIodineState} change every single tick once fuel is loaded --
+     * syncing on every change would mean every tick, so this pushes a fresh snapshot on a plain timer instead
+     * (once a second is plenty for a console display, not a real-time control surface).
+     */
+    private static final int PHYSICS_DISPLAY_SYNC_INTERVAL_TICKS = 20;
+    private int physicsDisplaySyncTicks = 0;
+
+    /** Bounds {@link #updateXenonDeadTimeEstimate()}'s lookahead loop -- see its own JavaDoc. */
+    private static final double XENON_DEAD_TIME_MAX_LOOKAHEAD_SECONDS = 4.0 * 3600.0;
+
+    private void syncPhysicsDisplayPeriodically() {
+        if (physicsDisplaySyncTicks-- > 0) return;
+        physicsDisplaySyncTicks = PHYSICS_DISPLAY_SYNC_INTERVAL_TICKS;
+        updateXenonDeadTimeEstimate();
+        writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+    }
+
+    /**
+     * Refreshes {@link #xenonDeadTimeRemainingSeconds} -- only while not {@code OPERATING}/{@code STARTUP} (see
+     * that field's own JavaDoc for why the zero-population lookahead assumption only holds then); left at its
+     * last value otherwise, matching the pattern of every other display-only field in this class.
+     */
+    private void updateXenonDeadTimeEstimate() {
+        if (operatingState.stage == ReactorOperatingStage.OPERATING ||
+                operatingState.stage == ReactorOperatingStage.STARTUP) {
+            return;
+        }
+        XenonIodineConstants xenonConstants = new XenonIodineConstants(ConfigHolder.reactor.xenonDeadTimeSeconds,
+                ConfigHolder.reactor.equilibriumXenonWorth);
+        xenonDeadTimeRemainingSeconds = XenonDeadTimeCalibration.estimateRemainingDeadTimeSeconds(xenonIodineState,
+                xenonConstants, ConfigHolder.reactor.equilibriumXenonWorth, XENON_DEAD_TIME_MAX_LOOKAHEAD_SECONDS);
+    }
+
+    /**
+     * Server-side only (called from {@link #updateFormedValid()}), so unlike
+     * {@code MetaTileEntityConsoleScreen#getLinkedReactor()} this can safely use {@link #getAbilities} directly --
+     * no client-sync pitfall here, see {@link GTNLMultiblockAbility#REACTOR_LINK_TRANSMITTER}'s own part.
+     */
+    @Override
+    public boolean hasActiveConsoleLink() {
+        List<IReactorLinkHatch> transmitters = getAbilities(GTNLMultiblockAbility.REACTOR_LINK_TRANSMITTER);
+        return !transmitters.isEmpty() && transmitters.get(0).hasActiveLink();
+    }
+
+    private void writeOperatingStatus(@NotNull PacketBuffer buf) {
+        buf.writeEnumValue(operatingState.stage);
+        buf.writeBoolean(operatingState.lastScramReason != null);
+        if (operatingState.lastScramReason != null) {
+            buf.writeEnumValue(operatingState.lastScramReason);
+        }
+        buf.writeDouble(coolantMassKg);
+        buf.writeBoolean(coolantInjectionActive);
+        buf.writeDouble(ratedCoolantMassKg);
+        buf.writeDouble(pressureMPa);
+        buf.writeBoolean(pressurizationActive);
+        buf.writeBoolean(depressurizationActive);
+        buf.writeDouble(temperatureKelvin);
+        buf.writeDouble(fuelTemperatureKelvin);
+        buf.writeDouble(meltedFuelMassKg);
+        buf.writeDouble(coreFuelMassAtMeltdownStartKg);
+        buf.writeDouble(primaryVoidFraction);
+        buf.writeEnumValue(severeAccidentState.stage);
+        buf.writeDouble(severeAccidentState.coreMeltFraction);
+        buf.writeDouble(boronPpm);
+        buf.writeLong(totalPowerConsumptionEuPerTick);
+        buf.writeVarInt(primaryCirculationFlowMb);
+        buf.writeBoolean(boronDilutionActive);
+        buf.writeBoolean(boronConcentrationActive);
+        buf.writeBoolean(autoControlSequencer.isActive());
+        buf.writeBoolean(fuelControlRodHousingMismatch);
+        buf.writeDouble(pointKineticsState.relativeNeutronPopulation);
+        buf.writeDouble(totalReactivity);
+        buf.writeDouble(shapeReactivityPcm);
+        buf.writeDouble(localDopplerReactivityPcm);
+        buf.writeDouble(localModeratorTemperatureReactivityPcm);
+        buf.writeDouble(dopplerReactivityPcmSpread);
+        buf.writeDouble(xenonReactivityPcmSpread);
+        buf.writeDouble(xenonIodineState.xenonConcentration());
+        buf.writeDouble(xenonDeadTimeRemainingSeconds);
+        buf.writeVarInt(coreMapCells.size());
+        for (CoreMapCell cell : coreMapCells) {
+            buf.writeVarInt(cell.dx);
+            buf.writeVarInt(cell.dz);
+            buf.writeBoolean(cell.isFuel);
+            buf.writeDouble(cell.degradationLevel);
+        }
+        buf.writeVarInt(controlRodSummaries.size());
+        for (ControlRodSummary summary : controlRodSummaries) {
+            buf.writeVarInt(summary.dx);
+            buf.writeVarInt(summary.dz);
+            buf.writeVarInt(summary.bankId);
+            buf.writeDouble(summary.insertionDepth);
+        }
+    }
+
+    private void readOperatingStatus(@NotNull PacketBuffer buf) {
+        ReactorOperatingStage stage = buf.readEnumValue(ReactorOperatingStage.class);
+        ScramReason reason = buf.readBoolean() ? buf.readEnumValue(ScramReason.class) : null;
+        operatingState = new ReactorOperatingState(stage, reason);
+        coolantMassKg = buf.readDouble();
+        coolantInjectionActive = buf.readBoolean();
+        ratedCoolantMassKg = buf.readDouble();
+        pressureMPa = buf.readDouble();
+        pressurizationActive = buf.readBoolean();
+        depressurizationActive = buf.readBoolean();
+        temperatureKelvin = buf.readDouble();
+        fuelTemperatureKelvin = buf.readDouble();
+        meltedFuelMassKg = buf.readDouble();
+        coreFuelMassAtMeltdownStartKg = buf.readDouble();
+        primaryVoidFraction = buf.readDouble();
+        severeAccidentState = new SevereAccidentState(buf.readEnumValue(SevereAccidentStage.class), buf.readDouble());
+        boronPpm = buf.readDouble();
+        totalPowerConsumptionEuPerTick = buf.readLong();
+        primaryCirculationFlowMb = buf.readVarInt();
+        boronDilutionActive = buf.readBoolean();
+        boronConcentrationActive = buf.readBoolean();
+        autoControlSequencer.setActive(buf.readBoolean());
+        fuelControlRodHousingMismatch = buf.readBoolean();
+        // Display-only on the client: just enough of each state to back this class's own getters, not a full
+        // reconstruction (the client never runs updatePhysicsAmplitude() itself, so precursor/iodine detail is
+        // never needed here).
+        pointKineticsState = new PointKineticsState(buf.readDouble(), new double[0]);
+        totalReactivity = buf.readDouble();
+        shapeReactivityPcm = buf.readDouble();
+        localDopplerReactivityPcm = buf.readDouble();
+        localModeratorTemperatureReactivityPcm = buf.readDouble();
+        dopplerReactivityPcmSpread = buf.readDouble();
+        xenonReactivityPcmSpread = buf.readDouble();
+        xenonIodineState = new XenonIodineState(0.0, buf.readDouble());
+        xenonDeadTimeRemainingSeconds = buf.readDouble();
+        int cellCount = buf.readVarInt();
+        List<CoreMapCell> cells = new ArrayList<>(cellCount);
+        for (int i = 0; i < cellCount; i++) {
+            cells.add(new CoreMapCell(buf.readVarInt(), buf.readVarInt(), buf.readBoolean(), buf.readDouble()));
+        }
+        coreMapCells = cells;
+        int summaryCount = buf.readVarInt();
+        List<ControlRodSummary> summaries = new ArrayList<>(summaryCount);
+        for (int i = 0; i < summaryCount; i++) {
+            summaries.add(new ControlRodSummary(buf.readVarInt(), buf.readVarInt(), buf.readVarInt(),
+                    buf.readDouble()));
+        }
+        controlRodSummaries = summaries;
+    }
+
+    @Override
+    public void receiveCustomData(int dataId, @NotNull PacketBuffer buf) {
+        super.receiveCustomData(dataId, buf);
+        if (dataId == UPDATE_OPERATING_STATUS) {
+            readOperatingStatus(buf);
+        }
+    }
+
+    @Override
+    public void writeInitialSyncData(@NotNull PacketBuffer buf) {
+        super.writeInitialSyncData(buf);
+        writeOperatingStatus(buf);
+    }
+
+    @Override
+    public void receiveInitialSyncData(@NotNull PacketBuffer buf) {
+        super.receiveInitialSyncData(buf);
+        readOperatingStatus(buf);
+    }
+
+    @Override
+    public NBTTagCompound writeToNBT(NBTTagCompound data) {
+        super.writeToNBT(data);
+        data.setString("OperatingStage", operatingState.stage.name());
+        if (operatingState.lastScramReason != null) {
+            data.setString("LastScramReason", operatingState.lastScramReason.name());
+        }
+        data.setDouble("CoolantMassKg", coolantMassKg);
+        data.setBoolean("CoolantInjectionActive", coolantInjectionActive);
+        data.setDouble("PressureMPa", pressureMPa);
+        data.setBoolean("PressurizationActive", pressurizationActive);
+        data.setBoolean("DepressurizationActive", depressurizationActive);
+        data.setDouble("TemperatureKelvin", temperatureKelvin);
+        data.setDouble("FuelTemperatureKelvin", fuelTemperatureKelvin);
+        data.setDouble("MeltedFuelMassKg", meltedFuelMassKg);
+        data.setDouble("CoreFuelMassAtMeltdownStartKg", coreFuelMassAtMeltdownStartKg);
+        data.setDouble("PrimaryVoidFraction", primaryVoidFraction);
+        data.setString("SevereAccidentStage", severeAccidentState.stage.name());
+        data.setDouble("CoreMeltFraction", severeAccidentState.coreMeltFraction);
+        data.setDouble("BoronPpm", boronPpm);
+        data.setBoolean("BoronDilutionActive", boronDilutionActive);
+        data.setBoolean("BoronConcentrationActive", boronConcentrationActive);
+        data.setDouble("RelativeNeutronPopulation", pointKineticsState.relativeNeutronPopulation);
+        NBTTagList precursorList = new NBTTagList();
+        for (double precursor : pointKineticsState.precursorConcentrations) {
+            precursorList.appendTag(new NBTTagDouble(precursor));
+        }
+        data.setTag("PrecursorConcentrations", precursorList);
+        data.setDouble("TotalReactivity", totalReactivity);
+        data.setDouble("IodineConcentration", xenonIodineState.iodineConcentration());
+        data.setDouble("XenonConcentration", xenonIodineState.xenonConcentration());
+        return data;
+    }
+
+    @Override
+    public void readFromNBT(NBTTagCompound data) {
+        super.readFromNBT(data);
+        ReactorOperatingStage stage = data.hasKey("OperatingStage") ?
+                ReactorOperatingStage.valueOf(data.getString("OperatingStage")) : ReactorOperatingStage.SHUTDOWN;
+        ScramReason reason = data.hasKey("LastScramReason") ? ScramReason.valueOf(data.getString("LastScramReason")) :
+                null;
+        operatingState = new ReactorOperatingState(stage, reason);
+        coolantMassKg = data.getDouble("CoolantMassKg");
+        coolantInjectionActive = data.getBoolean("CoolantInjectionActive");
+        pressureMPa = data.getDouble("PressureMPa");
+        pressurizationActive = data.getBoolean("PressurizationActive");
+        depressurizationActive = data.getBoolean("DepressurizationActive");
+        temperatureKelvin = data.hasKey("TemperatureKelvin") ? data.getDouble("TemperatureKelvin") : 300.0;
+        fuelTemperatureKelvin = data.hasKey("FuelTemperatureKelvin") ? data.getDouble("FuelTemperatureKelvin") : 300.0;
+        meltedFuelMassKg = data.getDouble("MeltedFuelMassKg");
+        coreFuelMassAtMeltdownStartKg = data.getDouble("CoreFuelMassAtMeltdownStartKg");
+        primaryVoidFraction = data.getDouble("PrimaryVoidFraction");
+        SevereAccidentStage severeAccidentStage = data.hasKey("SevereAccidentStage") ?
+                SevereAccidentStage.valueOf(data.getString("SevereAccidentStage")) : SevereAccidentStage.NORMAL;
+        severeAccidentState = new SevereAccidentState(severeAccidentStage, data.getDouble("CoreMeltFraction"));
+        boronPpm = data.getDouble("BoronPpm");
+        boronDilutionActive = data.getBoolean("BoronDilutionActive");
+        boronConcentrationActive = data.getBoolean("BoronConcentrationActive");
+        NBTTagList precursorList = data.getTagList("PrecursorConcentrations", Constants.NBT.TAG_DOUBLE);
+        double[] precursorConcentrations = new double[precursorList.tagCount()];
+        for (int i = 0; i < precursorConcentrations.length; i++) {
+            precursorConcentrations[i] = precursorList.getDoubleAt(i);
+        }
+        pointKineticsState = new PointKineticsState(data.getDouble("RelativeNeutronPopulation"),
+                precursorConcentrations);
+        totalReactivity = data.getDouble("TotalReactivity");
+        xenonIodineState = new XenonIodineState(data.getDouble("IodineConcentration"),
+                data.getDouble("XenonConcentration"));
+    }
+
+    public MetaTileEntityPressurizedWaterReactor(ResourceLocation metaTileEntityId) {
+        super(metaTileEntityId);
+    }
+
+    @Override
+    public MetaTileEntity createMetaTileEntity(IGregTechTileEntity tileEntity) {
+        return new MetaTileEntityPressurizedWaterReactor(metaTileEntityId);
+    }
+
+    /** Closes {@link #telemetryLogger} if the block is broken while it's open. */
+    @Override
+    public void onRemoval() {
+        super.onRemoval();
+        if (telemetryLogger != null) {
+            telemetryLogger.close();
+            telemetryLogger = null;
+        }
+    }
+
+    @Override
+    public boolean allowsExtendedFacing() {
+        return false;
+    }
+
+    @Override
+    public boolean allowsFlip() {
+        return false;
+    }
+
+    @Override
+    public void checkStructurePattern() {
+        if (!this.isStructureFormed()) {
+            reinitializeStructurePattern();
+        }
+        super.checkStructurePattern();
+    }
+
+    @Override
+    protected void updateFormedValid() {
+        updateChannelCaches();
+        updatePhysicsShape();
+        updatePhysicsAmplitude();
+        updateFuelBurnup();
+        updateControlRodWear();
+        updateFuelAndCoolantThermal();
+        updateCoolantInjection();
+        updatePressureAdjustment();
+        updateBoronAdjustment();
+        updateCoreMapCells();
+        updateControlRodSummaries();
+        updateAutoControl();
+        checkAutomaticStageTransitions();
+        checkScramConditions();
+        updateSevereAccidentState();
+        syncPhysicsDisplayPeriodically();
+    }
+
+    @Override
+    protected void formStructure(PatternMatchContext context) {
+        super.formStructure(context);
+        fuelControlRodHousingMismatch = !checkFuelControlRodHousingColumns();
+    }
+
+    /**
+     * Scans straight down from each placed fuel/control-rod port's own position through the channel (down to,
+     * but not including, the solid bottom cap at layer 1) checking that every block in that column is the
+     * matching housing type.
+     */
+    private boolean checkFuelControlRodHousingColumns() {
+        if (getWorld() == null) return true;
+        int channelBottomY = getPos().getY() - LAYERS_BELOW_CONTROLLER + 1;
+        for (IMultiblockPart part : getMultiblockParts()) {
+            if (part instanceof MetaTileEntityFuelPort fuelPort) {
+                if (!isHousingColumnUniform(fuelPort.getPos(), channelBottomY, GTNLMetaBlocks.FUEL_ROD_HOUSING)) {
+                    return false;
+                }
+            } else if (part instanceof MetaTileEntityControlRodController controlRodController) {
+                if (!isHousingColumnUniform(controlRodController.getPos(), channelBottomY,
+                        GTNLMetaBlocks.CONTROL_ROD_HOUSING)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private boolean isHousingColumnUniform(@NotNull BlockPos portPos, int channelBottomY, @NotNull Block housingBlock) {
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(portPos);
+        for (int y = portPos.getY() - 1; y >= channelBottomY; y--) {
+            pos.setPos(portPos.getX(), y, portPos.getZ());
+            if (getWorld().getBlockState(pos).getBlock() != housingBlock) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    protected void configureErrorText(MultiblockUIBuilder builder) {
+        super.configureErrorText(builder);
+        builder.addCustom((keyList, syncer) -> {
+            if (!isStructureFormed()) return;
+            if (syncer.syncBoolean(fuelControlRodHousingMismatch)) {
+                keyList.add(KeyUtil.lang(TextFormatting.RED,
+                        "gtnuclear.multiblock.pressurized_water_reactor.housing_mismatch"));
+            }
+        });
+    }
+
+    private static boolean isVesselCasing(@NotNull IBlockState state) {
+        return state.getBlock() == GTNLMetaBlocks.REACTOR_VESSEL_CASING;
+    }
+
+    /**
+     * The controller sits on the horizontal center of the front wall, so scanning straight into the structure
+     * (away from the front face) from the controller's own position traces a chord through the circle's center
+     * -- i.e. the full diameter.
+     */
+    private int findDiameter() {
+        if (getWorld() == null) return MIN_DIAMETER;
+        int distance = 1;
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(getPos());
+        while (distance <= MAX_DIAMETER && !isVesselCasing(getWorld().getBlockState(pos))) {
+            pos.move(getFrontFacing().getOpposite());
+            distance++;
+        }
+        return distance;
+    }
+
+    /**
+     * Counts consecutive vessel-casing layers above the controller (including the solid top cap) by scanning straight
+     * up from the controller's own position.
+     */
+    private int findLayersAboveController() {
+        if (getWorld() == null) return FIXED_LAYERS_ABOVE_CONTROLLER + MIN_FLEXIBLE_MIDDLE_LAYERS;
+        int distance = 0;
+        int limit = MAX_TOTAL_HEIGHT - LAYERS_BELOW_CONTROLLER - 1;
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos(getPos());
+        while (distance < limit && isVesselCasing(getWorld().getBlockState(pos.move(EnumFacing.UP)))) {
+            distance++;
+        }
+        return distance;
+    }
+
+    private static int clampToOddDiameter(int value) {
+        int clamped = Math.max(Math.min(value, MAX_DIAMETER), MIN_DIAMETER);
+        return clamped % 2 == 0 ? clamped - 1 : clamped;
+    }
+
+    private static boolean withinRasterizedCircle(int row, int column, int center, int radius) {
+        double dRow = row - center;
+        double dColumn = column - center;
+        double limit = radius + 0.5;
+        return dRow * dRow + dColumn * dColumn < limit * limit;
+    }
+
+    private static String withCharAt(@NotNull String source, int index, char replacement) {
+        return source.substring(0, index) + replacement + source.substring(index + 1);
+    }
+
+    @NotNull
+    @Override
+    protected BlockPattern createStructurePattern() {
+        this.diameter = getWorld() != null ? clampToOddDiameter(findDiameter()) : MIN_DIAMETER;
+
+        int layersAboveController = getWorld() != null ? findLayersAboveController() :
+                FIXED_LAYERS_ABOVE_CONTROLLER + MIN_FLEXIBLE_MIDDLE_LAYERS;
+        layersAboveController = Math.max(
+                Math.min(layersAboveController, MAX_TOTAL_HEIGHT - LAYERS_BELOW_CONTROLLER - 1),
+                FIXED_LAYERS_ABOVE_CONTROLLER + MIN_FLEXIBLE_MIDDLE_LAYERS);
+        this.flexibleMiddleLayers = Math.min(layersAboveController - FIXED_LAYERS_ABOVE_CONTROLLER,
+                MAX_FLEXIBLE_MIDDLE_LAYERS);
+
+        int center = diameter / 2;
+        int radius = diameter / 2;
+
+        String[] ringLayer = new String[diameter];
+        String[] solidLayer = new String[diameter];
+        String[] topLayer = new String[diameter];
+        StringBuilder ringRow = new StringBuilder(diameter);
+        StringBuilder solidRow = new StringBuilder(diameter);
+        StringBuilder topRow = new StringBuilder(diameter);
+        int interiorCount = 0;
+
+        for (int row = 0; row < diameter; row++) {
+            for (int column = 0; column < diameter; column++) {
+                boolean inside = withinRasterizedCircle(row, column, center, radius);
+                solidRow.append(inside ? 'B' : ' ');
+                if (!inside) {
+                    ringRow.append(' ');
+                    topRow.append(' ');
+                } else {
+                    boolean boundary = !withinRasterizedCircle(row - 1, column, center, radius) ||
+                            !withinRasterizedCircle(row + 1, column, center, radius) ||
+                            !withinRasterizedCircle(row, column - 1, center, radius) ||
+                            !withinRasterizedCircle(row, column + 1, center, radius);
+                    ringRow.append(boundary ? 'B' : 'A');
+                    // Top cap: boundary stays casing wall, interior becomes a fuel-eligible ('F') or control-rod-
+                    // eligible ('C') channel slot, checkerboard-split so neither pool can ever be starved (see
+                    // this class's own JavaDoc on why the two are never the same slot).
+                    topRow.append(boundary ? 'B' : ((row + column) % 2 == 0 ? 'F' : 'C'));
+                    if (!boundary) interiorCount++;
+                }
+            }
+            ringLayer[row] = ringRow.toString();
+            solidLayer[row] = solidRow.toString();
+            topLayer[row] = topRow.toString();
+            ringRow.setLength(0);
+            solidRow.setLength(0);
+            topRow.setLength(0);
+        }
+        this.interiorCellsPerLayer = interiorCount;
+
+        // Left face center (coolant import); front face center, directly below the controller (maintenance
+        // hatch); back face center (energy hatch); right face center (radioactive wastewater drain) -- all on
+        // this same fixed "2nd layer from the bottom."
+        String[] importRingLayer = ringLayer.clone();
+        importRingLayer[center] = withCharAt(importRingLayer[center], 0, 'I');
+        importRingLayer[0] = withCharAt(importRingLayer[0], center, 'M');
+        importRingLayer[diameter - 1] = withCharAt(importRingLayer[diameter - 1], center, 'E');
+        importRingLayer[center] = withCharAt(importRingLayer[center], diameter - 1, 'D');
+
+        // Left face center (boric acid injection); right face center (coolant export).
+        String[] exportRingLayer = ringLayer.clone();
+        exportRingLayer[center] = withCharAt(exportRingLayer[center], 0, 'X');
+        exportRingLayer[center] = withCharAt(exportRingLayer[center], diameter - 1, 'O');
+
+        // Front face, horizontal center (controller), its immediate right neighbor (link hatch) and immediate
+        // left neighbor (startup neutron source hatch).
+        String[] controllerRingLayer = ringLayer.clone();
+        controllerRingLayer[0] = withCharAt(
+                withCharAt(withCharAt(controllerRingLayer[0], center, 'S'), center + 1, 'L'), center - 1, 'N');
+
+        // Back face center (pure/distilled water injection, for boron dilution).
+        String[] pureWaterRingLayer = ringLayer.clone();
+        pureWaterRingLayer[diameter - 1] = withCharAt(pureWaterRingLayer[diameter - 1], center, 'P');
+
+        // Left face center (emergency coolant injection).
+        String[] emergencyCoolantRingLayer = ringLayer.clone();
+        emergencyCoolantRingLayer[center] = withCharAt(emergencyCoolantRingLayer[center], 0, 'Q');
+
+        // Split the flexible middle budget around the dedicated pure water hatch layer so it sits as close to
+        // the true vertical center of the whole structure as the available budget allows.
+        int layersAroundWaterHatch = flexibleMiddleLayers - MIN_FLEXIBLE_MIDDLE_LAYERS;
+        int lowerRepeat = layersAroundWaterHatch / 2;
+        int upperRepeat = layersAroundWaterHatch - lowerRepeat;
+
+        return FactoryBlockPattern.start(RelativeDirection.RIGHT, RelativeDirection.FRONT, RelativeDirection.UP)
+                .aisle(solidLayer)
+                .aisle(importRingLayer)
+                .aisle(controllerRingLayer)
+                .aisle(ringLayer).setRepeatable(lowerRepeat)
+                .aisle(pureWaterRingLayer)
+                .aisle(ringLayer).setRepeatable(upperRepeat)
+                .aisle(exportRingLayer)
+                .aisle(emergencyCoolantRingLayer)
+                .aisle(topLayer)
+                .where('S', selfPredicate())
+                .where('L', abilities(GTNLMultiblockAbility.REACTOR_LINK_TRANSMITTER).setMinGlobalLimited(1))
+                .where('N', abilities(GTNLMultiblockAbility.NEUTRON_SOURCE_PORT).setMinGlobalLimited(1))
+                .where('Q', abilities(GTNLMultiblockAbility.EMERGENCY_COOLANT_IMPORT).setMinGlobalLimited(1))
+                .where('I', abilities(GTNLMultiblockAbility.REACTOR_COOLANT_IMPORT).setMinGlobalLimited(1))
+                .where('M', maintenancePredicate())
+                .where('E', abilities(MultiblockAbility.INPUT_ENERGY).setMinGlobalLimited(1))
+                .where('D', abilities(GTNLMultiblockAbility.RADIOACTIVE_WASTEWATER_EXPORT).setMinGlobalLimited(1))
+                .where('O', abilities(GTNLMultiblockAbility.REACTOR_COOLANT_EXPORT).setMinGlobalLimited(1))
+                .where('X', abilities(GTNLMultiblockAbility.BORIC_ACID_IMPORT).setMinGlobalLimited(1))
+                .where('P', abilities(GTNLMultiblockAbility.PURE_WATER_IMPORT).setMinGlobalLimited(1))
+                .where('F', abilities(GTNLMultiblockAbility.FUEL_PORT).setMinGlobalLimited(2)
+                        .or(states(GTNLMetaBlocks.REACTOR_VESSEL_CASING
+                                .getState(ReactorVesselCasing.CasingType.PWR_REACTOR_VESSEL))))
+                .where('C', abilities(GTNLMultiblockAbility.CONTROL_ROD_PORT).setMinGlobalLimited(4)
+                        .or(states(GTNLMetaBlocks.REACTOR_VESSEL_CASING
+                                .getState(ReactorVesselCasing.CasingType.PWR_REACTOR_VESSEL))))
+                .where('A', any())
+                .where('B',
+                        states(GTNLMetaBlocks.REACTOR_VESSEL_CASING
+                                .getState(ReactorVesselCasing.CasingType.PWR_REACTOR_VESSEL)))
+                .where(' ', any())
+                .build();
+    }
+
+    @SideOnly(Side.CLIENT)
+    @Override
+    public ICubeRenderer getBaseTexture(IMultiblockPart sourcePart) {
+        return GTNLTextures.PWR_REACTOR_VESSEL_CASING;
+    }
+
+    @SideOnly(Side.CLIENT)
+    @Override
+    @NotNull
+    protected ICubeRenderer getFrontOverlay() {
+        return GTNLTextures.PWR_FISSION_REACTOR_OVERLAY;
+    }
+
+    @Override
+    public void renderMetaTileEntity(CCRenderState renderState, Matrix4 translation, IVertexOperation[] pipeline) {
+        super.renderMetaTileEntity(renderState, translation, pipeline);
+
+        this.getFrontOverlay().renderOrientedState(renderState, translation, pipeline, getFrontFacing(),
+                isStructureFormed(), true);
+    }
+
+    @Override
+    public boolean shouldShowVoidingModeButton() {
+        return false;
+    }
+}

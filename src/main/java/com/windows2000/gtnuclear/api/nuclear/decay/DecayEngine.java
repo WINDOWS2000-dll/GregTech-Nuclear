@@ -63,12 +63,12 @@ public final class DecayEngine {
     }
 
     /**
-     * @param composition       current amounts, keyed by nuclide. Entries for stable/zero-amount nuclides may be
-     *                          omitted.
-     * @param elapsedSeconds    real-world physical time to advance by; must be non-negative.
+     * @param composition        current amounts, keyed by nuclide. Entries for stable/zero-amount nuclides may be
+     *                           omitted.
+     * @param elapsedSeconds     real-world physical time to advance by; must be non-negative.
      * @param halfLifeCompressor applied to each {@link Element#halfLifeSeconds} before computing that nuclide's
-     *                          decay constant (see this class's own JavaDoc re: time compression). Only ever
-     *                          called with positive values (stable nuclides' -1 is never passed through it).
+     *                           decay constant (see this class's own JavaDoc re: time compression). Only ever
+     *                           called with positive values (stable nuclides' -1 is never passed through it).
      * @return a new map with every nuclide reachable from the input (including the inputs themselves) mapped to
      *         its amount after {@code elapsedSeconds}, with negligible (< 1e-12) entries pruned.
      */

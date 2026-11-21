@@ -1,14 +1,15 @@
 package com.windows2000.gtnuclear.common.metatileentities;
 
-import com.windows2000.gtnuclear.api.GTNuclearValues;
-
 import gregtech.api.GregTechAPI;
 import gregtech.api.metatileentity.registry.MTEManager;
 
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 
+import com.windows2000.gtnuclear.api.GTNuclearValues;
+
 /**
- * Creates this mod's own MTE registry namespace, mirroring {@link com.windows2000.gtnuclear.api.unification.materials.GTNLMaterials}'s
+ * Creates this mod's own MTE registry namespace, mirroring
+ * {@link com.windows2000.gtnuclear.api.unification.materials.GTNLMaterials}'s
  * handling of {@code MaterialRegistryEvent}/{@code MaterialEvent}. Not {@code @Mod.EventBusSubscriber}-annotated
  * for the same reason -- see that class's own JavaDoc; {@code CoreModule#construction} registers this class to the
  * Forge event bus explicitly instead.

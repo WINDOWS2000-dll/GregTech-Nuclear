@@ -9,5 +9,4 @@ public class GTNLLogger {
     public static final Logger logger = LogManager.getLogger(GTNuclearValues.MOD_NAME);
 
     private GTNLLogger() {}
-
 }

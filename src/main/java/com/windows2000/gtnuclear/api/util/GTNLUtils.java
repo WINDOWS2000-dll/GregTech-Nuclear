@@ -2,9 +2,8 @@ package com.windows2000.gtnuclear.api.util;
 
 import net.minecraft.util.ResourceLocation;
 
-import org.jetbrains.annotations.NotNull;
-
 import com.windows2000.gtnuclear.api.GTNuclearValues;
+import org.jetbrains.annotations.NotNull;
 
 public class GTNLUtils {
 

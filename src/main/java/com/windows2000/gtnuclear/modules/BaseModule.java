@@ -1,15 +1,13 @@
 package com.windows2000.gtnuclear.modules;
 
-import java.util.Collections;
-import java.util.Set;
-
-import com.windows2000.gtnuclear.api.util.GTNLUtils;
-
 import net.minecraft.util.ResourceLocation;
 
+import com.windows2000.gtnuclear.api.modules.IModule;
+import com.windows2000.gtnuclear.api.util.GTNLUtils;
 import org.jetbrains.annotations.NotNull;
 
-import com.windows2000.gtnuclear.api.modules.IModule;
+import java.util.Collections;
+import java.util.Set;
 
 /**
  * Convenience base for non-core modules of this mod's own container: depends on {@link Modules#MODULE_CORE} by

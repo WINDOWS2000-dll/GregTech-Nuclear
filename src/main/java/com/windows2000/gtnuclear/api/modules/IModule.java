@@ -1,9 +1,5 @@
 package com.windows2000.gtnuclear.api.modules;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.Set;
-
 import net.minecraft.block.Block;
 import net.minecraft.item.Item;
 import net.minecraft.item.crafting.IRecipe;
@@ -13,6 +9,10 @@ import net.minecraftforge.fml.common.event.*;
 
 import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.NotNull;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
 
 /**
  * All modules must implement this interface.

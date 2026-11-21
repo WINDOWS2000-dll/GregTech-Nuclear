@@ -1,0 +1,41 @@
+{
+  "forge_marker": 1,
+  "variants": {
+    "variant=turbine_hp_casing": {
+      "model": "minecraft:cube_all",
+      "textures": {
+        "all": "gregtech:blocks/casings/mechanic/machine_casing_turbine_titanium"
+      }
+    },
+    "variant=turbine_lp_casing": {
+      "model": "minecraft:cube_all",
+      "textures": {
+        "all": "gregtech:blocks/casings/mechanic/machine_casing_turbine_steel"
+      }
+    },
+    "variant=turbine_hp_pipe_casing": {
+      "model": "minecraft:cube_all",
+      "textures": {
+        "all": "gregtech:blocks/casings/pipe/machine_casing_pipe_titanium"
+      }
+    },
+    "variant=turbine_lp_pipe_casing": {
+      "model": "minecraft:cube_all",
+      "textures": {
+        "all": "gregtech:blocks/casings/pipe/machine_casing_pipe_steel"
+      }
+    },
+    "variant=turbine_hp_gearbox_casing": {
+      "model": "minecraft:cube_all",
+      "textures": {
+        "all": "gregtech:blocks/casings/gearbox/machine_casing_gearbox_titanium"
+      }
+    },
+    "variant=turbine_lp_gearbox_casing": {
+      "model": "minecraft:cube_all",
+      "textures": {
+        "all": "gregtech:blocks/casings/gearbox/machine_casing_gearbox_steel"
+      }
+    }
+  }
+}

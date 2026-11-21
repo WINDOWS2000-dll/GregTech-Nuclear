@@ -1,0 +1,11 @@
+{
+  "forge_marker": 1,
+  "variants": {
+    "variant=pwr_reactor_vessel": {
+      "model": "minecraft:cube_all",
+      "textures": {
+        "all": "gregtech:blocks/casings/multiblockcasings/fisson/pwr/reactor_vessel"
+      }
+    }
+  }
+}

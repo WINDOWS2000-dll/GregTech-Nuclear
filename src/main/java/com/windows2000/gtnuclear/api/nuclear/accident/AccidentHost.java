@@ -19,7 +19,7 @@ public interface AccidentHost {
 
     double getPrimaryVoidFraction();
 
-    boolean isFuelControlRodHousingMismatch();
+    boolean isHousingMismatch();
 
     double getFuelTemperatureKelvin();
 
@@ -31,4 +31,11 @@ public interface AccidentHost {
     double getCoreFuelMassAtMeltdownStartKg();
 
     double computeTotalCoreFuelMassKg();
+
+    /**
+     * Whether the core is currently producing meaningful heat (2026-11-21, stage 1-2 -- see
+     * {@link SevereAccidentProgressionTracker#advance}'s own use of it). Currently fission power only; decay heat
+     * joins in once it exists (stage 2 of this mod's reactor physics rework).
+     */
+    boolean hasCoreHeatSource();
 }

@@ -6,8 +6,7 @@ import com.windows2000.gtnuclear.common.metatileentities.multi.MetaTileEntityHig
 import com.windows2000.gtnuclear.common.metatileentities.multi.MetaTileEntityLowPressureSteamTurbine;
 import com.windows2000.gtnuclear.common.metatileentities.multi.MetaTileEntityPressurizedWaterReactor;
 import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityConsoleScreen;
-import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityControlRodController;
-import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityFuelPort;
+import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityFuelAssemblyPort;
 import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityNeutronSourceHatch;
 import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityReactorFluidPort;
 import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityReactorLinkHatch;
@@ -34,10 +33,12 @@ public class GTNLMetaTileEntities {
     public static MetaTileEntityReactorFluidPort PURE_WATER_IMPORT_HATCH;
     public static MetaTileEntityReactorFluidPort EMERGENCY_COOLANT_IMPORT_HATCH;
     public static MetaTileEntityReactorFluidPort RADIOACTIVE_WASTEWATER_EXPORT_HATCH;
+    // Residual heat removal cooling water ports (stage 1-4a) -- see ResidualHeatRemoval's own JavaDoc.
+    public static MetaTileEntityReactorFluidPort RHR_COOLING_WATER_IMPORT_HATCH;
+    public static MetaTileEntityReactorFluidPort RHR_COOLING_WATER_EXPORT_HATCH;
 
-    // PWR reactor fuel/control-rod channel ports -- see MetaTileEntityReactorItemPort's own JavaDoc.
-    public static MetaTileEntityFuelPort FUEL_PORT_HATCH;
-    public static MetaTileEntityControlRodController CONTROL_ROD_CONTROLLER_HATCH;
+    // PWR reactor fuel assembly channel port (fuel + guide-tube insert) -- see its own JavaDoc.
+    public static MetaTileEntityFuelAssemblyPort FUEL_ASSEMBLY_PORT;
     public static MetaTileEntityNeutronSourceHatch NEUTRON_SOURCE_HATCH;
 
     // Reactor-console link hatches -- see MetaTileEntityReactorLinkHatch's own JavaDoc.

@@ -218,6 +218,18 @@ class ReactorAutoControlSequencerTest {
     }
 
     @Test
+    void trippedReactorIsNeverNudgedEvenWithAStrongWithdrawSignal() {
+        ReactorAutoControlSequencer sequencer = new ReactorAutoControlSequencer();
+        sequencer.toggleActive();
+        // Same host state that drives "withdraw 1%" while OPERATING (see the ascending tests below), but tripped.
+        FakeAutoControlHost host = rodControlHost(0.5, -0.009, 0.0, 0.0);
+        host.operatingState = new ReactorOperatingState(ReactorOperatingStage.TRIPPED, ScramReason.MANUAL);
+
+        assertEquals("tripped", sequencer.update(host));
+        assertTrue(host.nudges.isEmpty());
+    }
+
+    @Test
     void ascendingLargePositiveErrorInsertsOnePercent() {
         ReactorAutoControlSequencer sequencer = new ReactorAutoControlSequencer();
         sequencer.toggleActive();

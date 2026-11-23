@@ -18,17 +18,18 @@ import com.windows2000.gtnuclear.common.metatileentities.multi.MetaTileEntityHig
 import com.windows2000.gtnuclear.common.metatileentities.multi.MetaTileEntityLowPressureSteamTurbine;
 import com.windows2000.gtnuclear.common.metatileentities.multi.MetaTileEntityPressurizedWaterReactor;
 import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityConsoleScreen;
-import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityControlRodController;
-import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityFuelPort;
+import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityFuelAssemblyPort;
 import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityNeutronSourceHatch;
 import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityReactorFluidPort;
 import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityReactorLinkHatch;
 import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityTurbineRotorHolder;
 import com.windows2000.gtnuclear.common.metatileentities.storage.MetaTileEntityIsotopeStorage;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.List;
 import java.util.stream.Collectors;
 
 import static com.windows2000.gtnuclear.api.util.GTNLUtils.gtnlID;
@@ -96,17 +97,13 @@ public class GTNLMetaTileEntityRegistration {
         ADVANCED_COOLANT_EXPORT_HATCH = registerFluidPort(9, "advanced_reactor_coolant_export_hatch", true,
                 GTNLMultiblockAbility.REACTOR_COOLANT_EXPORT, reactorCoolantBandFluids, 50000000);
 
-        ResourceLocation fuelPortId = gtnlID("fuel_port_hatch");
-        FUEL_PORT_HATCH = new MetaTileEntityFuelPort(fuelPortId);
-        GregTechAPI.mteManager.getRegistry(GTNuclearValues.MODID).register(10, fuelPortId, FUEL_PORT_HATCH);
-        MultiblockAbility.registerMultiblockAbility(GTNLMultiblockAbility.FUEL_PORT, FUEL_PORT_HATCH);
-
-        ResourceLocation controlRodControllerId = gtnlID("control_rod_controller_hatch");
-        CONTROL_ROD_CONTROLLER_HATCH = new MetaTileEntityControlRodController(controlRodControllerId);
-        GregTechAPI.mteManager.getRegistry(GTNuclearValues.MODID)
-                .register(11, controlRodControllerId, CONTROL_ROD_CONTROLLER_HATCH);
-        MultiblockAbility.registerMultiblockAbility(GTNLMultiblockAbility.CONTROL_ROD_PORT,
-                CONTROL_ROD_CONTROLLER_HATCH);
+        // Stage 1-3 (2026-11-21): the former fuel_port_hatch (ID 10) and control_rod_controller_hatch (ID 11)
+        // were merged into one fuel assembly port, which takes over ID 10. ID 11 is retired -- do not reuse it.
+        ResourceLocation fuelAssemblyPortId = gtnlID("fuel_assembly_port");
+        FUEL_ASSEMBLY_PORT = new MetaTileEntityFuelAssemblyPort(fuelAssemblyPortId);
+        GregTechAPI.mteManager.getRegistry(GTNuclearValues.MODID).register(10, fuelAssemblyPortId,
+                FUEL_ASSEMBLY_PORT);
+        MultiblockAbility.registerMultiblockAbility(GTNLMultiblockAbility.FUEL_ASSEMBLY_PORT, FUEL_ASSEMBLY_PORT);
 
         ResourceLocation linkTransmitterId = gtnlID("reactor_link_transmitter_hatch");
         REACTOR_LINK_TRANSMITTER_HATCH = new MetaTileEntityReactorLinkHatch(linkTransmitterId, true);
@@ -178,6 +175,21 @@ public class GTNLMetaTileEntityRegistration {
         LOW_PRESSURE_STEAM_TURBINE = new MetaTileEntityLowPressureSteamTurbine(lowPressureSteamTurbineId);
         GregTechAPI.mteManager.getRegistry(GTNuclearValues.MODID)
                 .register(26, lowPressureSteamTurbineId, LOW_PRESSURE_STEAM_TURBINE);
+
+        // Residual heat removal cooling water ports (2026-11-24, stage 1-4a) -- the non-radioactive cooling side of
+        // the reactor's built-in RHR heat exchanger. The import accepts plain/distilled water as well as any
+        // cooling water band (its own fluid temperature sets the cooling capacity); the export emits the band
+        // matching the computed outlet temperature. Capacity: ~2 s of the reference-size reactor's design flow.
+        Collection<Fluid> coolingWaterBandFluids = Arrays.stream(GTNLMaterials.CoolingWaterBands)
+                .map(Material::getFluid).collect(Collectors.toList());
+        List<Fluid> rhrInletFluids = new ArrayList<>();
+        rhrInletFluids.add(Materials.Water.getFluid());
+        rhrInletFluids.add(Materials.DistilledWater.getFluid());
+        rhrInletFluids.addAll(coolingWaterBandFluids);
+        RHR_COOLING_WATER_IMPORT_HATCH = registerFluidPort(27, "rhr_cooling_water_import_hatch", false,
+                GTNLMultiblockAbility.RHR_COOLING_WATER_IMPORT, rhrInletFluids, 4000000);
+        RHR_COOLING_WATER_EXPORT_HATCH = registerFluidPort(28, "rhr_cooling_water_export_hatch", true,
+                GTNLMultiblockAbility.RHR_COOLING_WATER_EXPORT, coolingWaterBandFluids, 4000000);
     }
 
     private static MetaTileEntityReactorFluidPort registerFluidPort(int id, String name, boolean isExportHatch,

@@ -10,7 +10,6 @@ import net.minecraftforge.fml.relauncher.SideOnly;
 
 import com.windows2000.gtnuclear.common.blocks.generator.TurbineCasing;
 import com.windows2000.gtnuclear.common.blocks.heatExchanger.HeatExchangerCasing;
-import com.windows2000.gtnuclear.common.blocks.reactor.ControlRodHousing;
 import com.windows2000.gtnuclear.common.blocks.reactor.FuelRodHousing;
 import com.windows2000.gtnuclear.common.blocks.reactor.ReactorVesselCasing;
 import com.windows2000.gtnuclear.common.blocks.reactor.TestCasing;
@@ -24,7 +23,6 @@ public class GTNLMetaBlocks {
     public static TestCasing TEST_CASING;
     public static ReactorVesselCasing REACTOR_VESSEL_CASING;
     public static FuelRodHousing FUEL_ROD_HOUSING;
-    public static ControlRodHousing CONTROL_ROD_HOUSING;
     public static HeatExchangerCasing HEAT_EXCHANGER_CASING;
     public static TurbineCasing TURBINE_CASING;
 
@@ -35,8 +33,6 @@ public class GTNLMetaBlocks {
         REACTOR_VESSEL_CASING.setRegistryName("reactor_vessel_casing");
         FUEL_ROD_HOUSING = new FuelRodHousing();
         FUEL_ROD_HOUSING.setRegistryName("fuel_rod_housing");
-        CONTROL_ROD_HOUSING = new ControlRodHousing();
-        CONTROL_ROD_HOUSING.setRegistryName("control_rod_housing");
         HEAT_EXCHANGER_CASING = new HeatExchangerCasing();
         HEAT_EXCHANGER_CASING.setRegistryName("heat_exchanger_casing");
         TURBINE_CASING = new TurbineCasing();
@@ -48,7 +44,6 @@ public class GTNLMetaBlocks {
         registerItemModel(TEST_CASING);
         registerItemModel(REACTOR_VESSEL_CASING);
         registerItemModel(FUEL_ROD_HOUSING);
-        registerItemModel(CONTROL_ROD_HOUSING);
         registerItemModel(HEAT_EXCHANGER_CASING);
         registerItemModel(TURBINE_CASING);
     }

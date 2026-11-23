@@ -27,6 +27,15 @@ public final class GTNLMultiblockAbility {
     public static final MultiblockAbility<IFluidTank> RADIOACTIVE_WASTEWATER_EXPORT = fluidAbility(
             "radioactive_wastewater_export");
 
+    /**
+     * Cooling (non-radioactive) side of the reactor's built-in residual heat removal heat exchanger (2026-11-24,
+     * stage 1-4a) -- see {@code ResidualHeatRemoval}. The radioactive primary side never leaves the reactor.
+     */
+    public static final MultiblockAbility<IFluidTank> RHR_COOLING_WATER_IMPORT = fluidAbility(
+            "rhr_cooling_water_import");
+    public static final MultiblockAbility<IFluidTank> RHR_COOLING_WATER_EXPORT = fluidAbility(
+            "rhr_cooling_water_export");
+
     /** Heat exchanger's secondary-side ports -- see {@code MetaTileEntityHeatExchanger}'s own JavaDoc. */
     public static final MultiblockAbility<IFluidTank> FEEDWATER_IMPORT = fluidAbility("feedwater_import");
     public static final MultiblockAbility<IFluidTank> HIGH_PRESSURE_STEAM_EXPORT = fluidAbility(
@@ -47,8 +56,13 @@ public final class GTNLMultiblockAbility {
     /** The low-pressure turbine's own final exhaust (plain water), piped back toward feedwater. */
     public static final MultiblockAbility<IFluidTank> CONDENSATE_EXPORT = fluidAbility("condensate_export");
 
-    public static final MultiblockAbility<IItemHandlerModifiable> FUEL_PORT = itemAbility("fuel_port");
-    public static final MultiblockAbility<IItemHandlerModifiable> CONTROL_ROD_PORT = itemAbility("control_rod_port");
+    /**
+     * Fuel assembly port (fuel slot + guide-tube insert slot) -- replaces the former separate {@code fuel_port} and
+     * {@code control_rod_port} abilities since 2026-11-21 (stage 1-3 of this mod's reactor physics rework: control
+     * rod clusters live inside fuel assemblies' guide tubes, as in a real PWR).
+     */
+    public static final MultiblockAbility<IItemHandlerModifiable> FUEL_ASSEMBLY_PORT = itemAbility(
+            "fuel_assembly_port");
     public static final MultiblockAbility<IItemHandlerModifiable> NEUTRON_SOURCE_PORT = itemAbility(
             "neutron_source_port");
     /**

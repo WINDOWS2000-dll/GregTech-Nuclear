@@ -41,7 +41,7 @@ import com.windows2000.gtnuclear.common.ConfigHolder;
 import com.windows2000.gtnuclear.common.blocks.GTNLMetaBlocks;
 import com.windows2000.gtnuclear.common.blocks.reactor.ReactorVesselCasing;
 import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityConsoleScreen;
-import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityControlRodController;
+import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityFuelAssemblyPort;
 import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityReactorLinkHatch;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -353,8 +353,8 @@ public class MetaTileEntityControlConsole extends MultiblockWithDisplayBase impl
     @Override
     protected MultiblockUIFactory createUIFactory() {
         return super.createUIFactory()
-                .setSize(198, 490)
-                .setScreenHeight(270)
+                .setSize(198, 508)
+                .setScreenHeight(288)
                 .addScreenChildren(this::addCommandButtons);
     }
 
@@ -427,13 +427,25 @@ public class MetaTileEntityControlConsole extends MultiblockWithDisplayBase impl
             if (reactor != null) reactor.requestToggleAutoRodControl();
         }, "gtnuclear.gui.control_console.auto_control").pos(98, 184).size(90, 16));
 
+        // Stage 1-4a (2026-11-24): reactor coolant pumps and residual heat removal, both toggles -- the reactor
+        // side refuses an RCP stop while the core is running and an RHR start outside its interlocks.
+        parent.child(commandButton("rcp_trigger", syncManager, () -> {
+            MetaTileEntityPressurizedWaterReactor reactor = getLinkedReactor();
+            if (reactor != null) reactor.requestToggleRcp();
+        }, "gtnuclear.gui.control_console.rcp").pos(4, 202).size(90, 16));
+
+        parent.child(commandButton("rhr_trigger", syncManager, () -> {
+            MetaTileEntityPressurizedWaterReactor reactor = getLinkedReactor();
+            if (reactor != null) reactor.requestToggleRhr();
+        }, "gtnuclear.gui.control_console.rhr").pos(98, 202).size(90, 16));
+
         addBankNudgeButtons(parent, syncManager);
         addControlRodList(parent, syncManager);
     }
 
     /**
      * Stage 5 of this mod's startup/shutdown sequence work (2026-09-21): a row of nudge buttons per bank (0-
-     * {@link MetaTileEntityControlRodController#BANK_COUNT}), not a one-shot "withdraw/insert fully" jump -- see
+     * {@link MetaTileEntityFuelAssemblyPort#BANK_COUNT}), not a one-shot "withdraw/insert fully" jump -- see
      * {@code MetaTileEntityPressurizedWaterReactor#requestNudgeBank}'s own JavaDoc for why (matches this mod's
      * existing "no automatic withdrawal button" decision, applied to a whole bank at once). One bank per row
      * (2026-09-22: stacked vertically, not two banks per row, to leave headroom below for the taller layout).
@@ -451,8 +463,8 @@ public class MetaTileEntityControlConsole extends MultiblockWithDisplayBase impl
     private void addBankNudgeButtons(@NotNull ParentWidget<?> parent, @NotNull PanelSyncManager syncManager) {
         int buttonWidth = 29;
         int gap = 2;
-        for (int bankId = 0; bankId <= MetaTileEntityControlRodController.BANK_COUNT; bankId++) {
-            int y = 208 + bankId * 18;
+        for (int bankId = 0; bankId <= MetaTileEntityFuelAssemblyPort.BANK_COUNT; bankId++) {
+            int y = 226 + bankId * 18;
             int finalBankId = bankId;
             int x = 4;
 
@@ -489,7 +501,7 @@ public class MetaTileEntityControlConsole extends MultiblockWithDisplayBase impl
         List<MetaTileEntityPressurizedWaterReactor.ControlRodSummary> summaries = reactor != null ?
                 reactor.getControlRodSummaries() : Collections.emptyList();
         parent.child(new ControlRodListWidget(summaries, syncManager, this::cycleControlRodBank)
-                .pos(4, 302).size(182, 70));
+                .pos(4, 320).size(182, 70));
     }
 
     /** Server-side target of the list's row clicks -- see {@link ControlRodListWidget}'s own JavaDoc. */

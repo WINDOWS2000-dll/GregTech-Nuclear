@@ -282,6 +282,17 @@ public class ConfigHolder {
         public double maxSafePressureMPa = 17.0;
 
         @Config.Comment({
+                "Added 2026-11-21 (stage 1-1 of this mod's reactor physics rework, see this mod's design memory): " +
+                        "time (s) for a fully withdrawn control rod to reach full insertion after a reactor trip -- " +
+                        "every rod is driven toward full insertion at a constant speed for as long as the reactor " +
+                        "stays TRIPPED, modeling rod cluster control assemblies dropping under gravity once their " +
+                        "drive mechanisms release them. 0 makes insertion instantaneous.",
+                "Default: 2.2, within a real PWR's technical-specification rod drop time limit (roughly " +
+                        "2.2-2.7 s)." })
+        @Config.RangeDouble(min = 0.0, max = 60.0)
+        public double scramRodDropTimeSeconds = 2.2;
+
+        @Config.Comment({
                 "Added 2026-09-24 (real-playtest-driven, see this mod's design memory): relative neutron " +
                         "population (1.0 = rated) at or above which a SCRAM fires automatically -- none of this " +
                         "mod's original SCRAM triggers (temperature/pressure/coolant loss) watch power itself, so " +
@@ -296,17 +307,14 @@ public class ConfigHolder {
         public double maxSafeRelativePower = 1.1;
 
         @Config.Comment({
-                "Total initial uranium mass (kg) a freshly-crafted fuel rod item holds, split between U-235/U-238 " +
-                        "by its enrichment tier's mole fraction (see " +
-                        "com.windows2000.gtnuclear.common.item.ItemFuelRod). Only the ratio between isotopes " +
-                        "matters for neutron physics; this absolute scale instead governs how much isotope mass " +
-                        "is actually available to be consumed by com.windows2000.gtnuclear.api.nuclear.fuel." +
-                        "FuelBurnupEngine over a rod's service life once burnup is wired into the reactor's tick " +
-                        "loop -- i.e. it is really a burnup-rate/fuel-lifetime balance knob, not yet calibrated " +
-                        "against an actual burn rate.",
-                "Default: 200.0 (placeholder pending burnup-rate calibration)." })
+                "Initial uranium (heavy metal) mass (kg) per channel layer of a fuel assembly -- an assembly " +
+                        "fabricated with length L holds L times this (2026-11-21, stage 1-3 of this mod's reactor " +
+                        "physics rework, see this mod's design memory: replaces the former flat per-rod " +
+                        "fuelRodUraniumMassKg, which gave a 9-layer and a 36-layer channel the same amount of " +
+                        "fuel). Also sets fuel (UO2) heat capacity and melt mass via the UO2/U mass ratio.",
+                "Default: 27.0, a real Westinghouse 17x17 assembly (~460 kg U over 3.66 m) per 21.5 cm layer." })
         @Config.RangeDouble(min = 0.0, max = 1.0E6)
-        public double fuelRodUraniumMassKg = 200.0;
+        public double fuelUraniumPerLayerKg = 27.0;
 
         @Config.Comment({
                 "Gameplay-balance scaling constant for com.windows2000.gtnuclear.api.nuclear.fuel." +
@@ -314,9 +322,11 @@ public class ConfigHolder {
                         "amount, and its flux-weighted microscopic cross-section (raw barns, not converted to a " +
                         "real macroscopic rate) every tick, so this single coefficient absorbs all of those unit " +
                         "mismatches at once; it is not a physical constant.",
-                "Default: 3.0E-10, chosen so a fresh LEU rod's U-235 (~9 kg of fuelRodUraniumMassKg's default " +
-                        "200 kg) depletes over roughly an hour of continuous rated-power operation -- a rough " +
-                        "gameplay-pacing target, not derived from a real burnup rate, pending playtesting." })
+                "Default: 3.0E-10, chosen so a fresh LEU assembly's U-235 depletes over roughly an hour of " +
+                        "continuous rated-power operation -- a rough gameplay-pacing target, not derived from a " +
+                        "real burnup rate, pending playtesting. The rate is linear in each nuclide's amount, so " +
+                        "the stage 1-3 switch from kg to per-initial-heavy-metal-atom units (n_k) leaves the " +
+                        "relative depletion speed unchanged." })
         @Config.RangeDouble(min = 0.0, max = 1.0)
         public double fuelBurnupRateCoefficient = 3.0E-10;
 
@@ -1072,5 +1082,79 @@ public class ConfigHolder {
                         "whole time wears out in about 120 hours. Pending playtesting." })
         @Config.RangeDouble(min = 0.0, max = 1.0)
         public double controlRodWearRateCoefficient = 2.3148E-3;
+
+        // ---------------------------------------------------------------- residual heat removal (stage 1-4a)
+
+        @Config.Comment({
+                "Thermal power (W) of the real plant the rhr* flow/UA/pump values below describe -- each reactor " +
+                        "scales them by its own rated thermal power / this value (2026-11-24, stage 1-4a of this " +
+                        "mod's reactor physics rework, see this mod's design memory).",
+                "Default: 3.411E9, a real Westinghouse 4-loop PWR." })
+        @Config.RangeDouble(min = 1.0, max = 1.0E12)
+        public double rhrReferenceThermalPowerWatts = 3.411E9;
+
+        @Config.Comment({
+                "Primary-side flow (kg/s) through the RHR heat exchangers at the reference plant -- two trains of " +
+                        "about 240 kg/s (~3800 gpm) each.",
+                "Default: 480.0" })
+        @Config.RangeDouble(min = 0.0, max = 1.0E9)
+        public double rhrPrimaryFlowKgPerSecond = 480.0;
+
+        @Config.Comment({
+                "Design cooling water flow (kg/s) through the RHR heat exchangers' cooling side at the reference " +
+                        "plant (1 kg = 1000 mB). The flow actually used each tick is limited by what the cooling " +
+                        "water import hatch holds and what the export hatch can accept.",
+                "Default: 600.0 (two trains of ~300 kg/s)" })
+        @Config.RangeDouble(min = 0.0, max = 1.0E9)
+        public double rhrCoolingWaterFlowKgPerSecond = 600.0;
+
+        @Config.Comment({
+                "Combined UA (W/K) of the RHR heat exchangers at the reference plant, used with the " +
+                        "effectiveness-NTU method (counterflow).",
+                "Default: 6.2E5 -- about 37 MW per train with the primary at 450 K and 300 K cooling water, a " +
+                        "typical real RHR heat exchanger duty at the start of RHR cooldown." })
+        @Config.RangeDouble(min = 0.0, max = 1.0E12)
+        public double rhrHeatExchangerUaWattsPerKelvin = 6.2E5;
+
+        @Config.Comment({
+                "RHR pump heat (W) deposited in the primary coolant at the reference plant while RHR is running.",
+                "Default: 6.0E5 (two ~300 kW pumps)" })
+        @Config.RangeDouble(min = 0.0, max = 1.0E12)
+        public double rhrPumpHeatWatts = 6.0E5;
+
+        @Config.Comment({
+                "RHR pump electrical draw (EU/t) at the reference plant, scaled like the values above. Without " +
+                        "power the RHR pumps stop and no heat is removed (it stays in service).",
+                "Default: 300.0 -- the same EU-per-real-MW ratio this mod uses for the reactor coolant pumps " +
+                        "(~20 MW real <-> ~10,000 EU/t), pending playtesting." })
+        @Config.RangeDouble(min = 0.0, max = 1.0E9)
+        public double rhrPumpEuPerTick = 300.0;
+
+        @Config.Comment({
+                "RHR can only be placed in service at or below this primary coolant temperature (K).",
+                "Default: 450.0 (~350 F, the real PWR RHR entry condition)" })
+        @Config.RangeDouble(min = 0.0, max = 1.0E4)
+        public double rhrMaxStartTemperatureKelvin = 450.0;
+
+        @Config.Comment({
+                "RHR can only be placed in service at or below this primary pressure (MPa, absolute).",
+                "Default: 3.1 (~425 psig, the real suction valve open-permissive)" })
+        @Config.RangeDouble(min = 0.0, max = 1.0E3)
+        public double rhrMaxStartPressureMPa = 3.1;
+
+        @Config.Comment({
+                "An in-service RHR isolates itself automatically above this primary pressure (MPa, absolute), " +
+                        "protecting its low-pressure piping.",
+                "Default: 4.2 (~600 psig, the real suction valve auto-closure)" })
+        @Config.RangeDouble(min = 0.0, max = 1.0E3)
+        public double rhrIsolationPressureMPa = 4.2;
+
+        @Config.Comment({
+                "DEBUG/VERIFICATION ONLY: multiplies the heat RHR removes from the primary coolant, to shorten " +
+                        "cooldown while testing. 1.0 is the physical value; anything else breaks the cooling " +
+                        "water's own energy balance (its outlet temperature still reflects the unmultiplied value).",
+                "Default: 1.0" })
+        @Config.RangeDouble(min = 0.0, max = 1.0E6)
+        public double rhrCooldownAssistFactor = 1.0;
     }
 }

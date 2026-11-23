@@ -20,6 +20,15 @@ package com.windows2000.gtnuclear.api.nuclear.operation;
  * hatch(es) completely unable to supply anything at all (not merely below full desired rate -- a real plant's
  * emergency diesel generators providing reduced but nonzero power still keep it running), debounced the same way
  * as {@link #CONSOLE_LINK_LOST} to ignore brief hiccups rather than genuine sustained loss.
+ * <p>
+ * The rod drop itself is common to every reason here, not specific to this one: since 2026-11-21 (stage 1-1 of
+ * this mod's reactor physics rework) the reactor drives every rod toward full insertion via {@link ScramRodDrop}
+ * for as long as it stays {@link ReactorOperatingStage#TRIPPED}. Before that, a trip of any kind only changed the
+ * stage label and the "drops the rods in by gravity" description above was not actually implemented.
+ * <p>
+ * {@link #STRUCTURE_BREACH} added 2026-11-21 (stage 1-3): the vessel structure stopped matching its pattern (a
+ * block was broken) while the reactor was running. The structure is then no longer formed, so the rod drop cannot
+ * be simulated over time; every rod is forced to full insertion at once instead.
  */
 public enum ScramReason {
     MANUAL,
@@ -29,5 +38,6 @@ public enum ScramReason {
     COOLANT_LOSS,
     CONSOLE_LINK_LOST,
     POWER_LIMIT,
-    LOSS_OF_ELECTRICAL_POWER
+    LOSS_OF_ELECTRICAL_POWER,
+    STRUCTURE_BREACH
 }

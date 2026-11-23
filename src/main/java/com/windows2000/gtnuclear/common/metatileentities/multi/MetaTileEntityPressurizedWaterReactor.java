@@ -72,14 +72,19 @@ import com.windows2000.gtnuclear.api.nuclear.operation.ReactorOperatingEvaluator
 import com.windows2000.gtnuclear.api.nuclear.operation.ReactorOperatingStage;
 import com.windows2000.gtnuclear.api.nuclear.operation.ReactorOperatingState;
 import com.windows2000.gtnuclear.api.nuclear.operation.ReactorScramEvaluator;
+import com.windows2000.gtnuclear.api.nuclear.operation.ReactorStartupRequirements;
 import com.windows2000.gtnuclear.api.nuclear.operation.ScramHost;
 import com.windows2000.gtnuclear.api.nuclear.operation.ScramReason;
+import com.windows2000.gtnuclear.api.nuclear.operation.ScramRodDrop;
 import com.windows2000.gtnuclear.api.nuclear.power.ReactorPowerConsumption;
 import com.windows2000.gtnuclear.api.nuclear.thermal.CoolantThermalSolver;
+import com.windows2000.gtnuclear.api.nuclear.thermal.CoolingWaterTemperatureBands;
+import com.windows2000.gtnuclear.api.nuclear.thermal.EnergyLedger;
 import com.windows2000.gtnuclear.api.nuclear.thermal.FuelCoolantSubstepping;
 import com.windows2000.gtnuclear.api.nuclear.thermal.FuelTemperatureStep;
 import com.windows2000.gtnuclear.api.nuclear.thermal.FuelThermalConstants;
 import com.windows2000.gtnuclear.api.nuclear.thermal.RatedCoolantMass;
+import com.windows2000.gtnuclear.api.nuclear.thermal.ResidualHeatRemoval;
 import com.windows2000.gtnuclear.api.nuclear.thermal.SteamProperties;
 import com.windows2000.gtnuclear.api.nuclear.thermal.WaterSaturationCurve;
 import com.windows2000.gtnuclear.api.unification.materials.GTNLElements;
@@ -90,9 +95,9 @@ import com.windows2000.gtnuclear.common.blocks.GTNLMetaBlocks;
 import com.windows2000.gtnuclear.common.blocks.reactor.ReactorVesselCasing;
 import com.windows2000.gtnuclear.common.item.ItemFuelRod;
 import com.windows2000.gtnuclear.common.item.ItemNeutronSourceRod;
-import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityControlRodController;
-import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityFuelPort;
+import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityFuelAssemblyPort;
 import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityNeutronSourceHatch;
+import com.windows2000.gtnuclear.common.util.ReactorEnergyCategory;
 import com.windows2000.gtnuclear.common.util.ReactorTelemetryLogger;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -131,25 +136,20 @@ import java.util.Map;
  * many flexible layers are in the middle.</li>
  * <li>Ring layer with the <b>emergency coolant injection hatch</b> ('Q', left face center) -- always the
  * "2nd layer from the top."</li>
- * <li>Solid top cap, except every non-boundary (interior) cell is either a fuel-eligible or control-rod-eligible
- * channel port slot instead of plain casing -- see below.</li>
+ * <li>Solid top cap, except every non-boundary (interior) cell is a fuel assembly channel slot -- see below.</li>
  * </ol>
  * The fixed layers below the controller (2) plus the fixed layers from the export ring up to the top cap (3)
  * plus the one flexible layer reserved for the pure water hatch force a minimum total height of 7.
  * <p>
- * <b>Fuel/control-rod channel ports</b> ('F'/'C'): every non-boundary cell of the top cap is permanently
- * designated, at pattern-generation time, as either a <b>fuel</b>-eligible slot ('F') or a
- * <b>control-rod</b>-eligible slot ('C') -- checkerboard-split (see {@link #createStructurePattern()}) so
- * neither pool can be starved even at minimum diameter. A fuel-eligible cell only ever accepts a fuel port or
- * plain vessel casing (never a control rod controller), and vice versa -- the two are never interchangeable at
- * the same physical position, unlike an earlier revision of this pattern that let either hatch type fill any
- * interior cell (a single shared symbol let a structurally-valid reactor be built with an arbitrarily skewed
- * fuel-to-control-rod ratio, and conflated what are physically two different kinds of channel). Casing is a
- * valid fallback at both symbols, so a player is never forced to fill every eligible cell -- only the global
- * minimums (2 fuel ports, 4 control rod controllers) are enforced. The exact geometric split (checkerboard) is
- * a placeholder: this mod's design memory notes an eventual neutron-physics-driven placement puzzle (fuel/rod
- * adjacency rules) is planned, at which point the "correct" arrangement will emerge from the simulation rather
- * than from a hardcoded rule here.
+ * <b>Fuel assembly channels</b> ('F', stage 1-3 of this mod's reactor physics rework, 2026-11-21): every
+ * non-boundary cell of the top cap accepts a fuel assembly port
+ * ({@link com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityFuelAssemblyPort}) or plain
+ * vessel casing; the column below a port must be uniformly {@code fuel_rod_housing}. As in a real PWR, control rod
+ * clusters sit in the fuel assemblies' guide tubes, so the former separate control rod channels ('C') are gone.
+ * The structure only requires {@value ReactorStartupRequirements#MIN_CONTROL_ROD_CLUSTERS} ports; what is loaded
+ * in them (fuel present, at least 4 intact clusters, lengths fitting the channel) is checked at startup instead
+ * ({@link ReactorStartupRequirements}), since GT's pattern check only sees blocks, not slot contents. Every
+ * interior cell is one CMFD column (see {@link #buildReactorGeometry()}).
  * <p>
  * The maintenance hatch and energy hatch use GTST's own standard abilities ({@code MAINTENANCE_HATCH} via
  * {@link #maintenancePredicate()}, {@code INPUT_ENERGY}). The six fluid ports (coolant import/export, boric
@@ -197,71 +197,131 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     private int diameter = MIN_DIAMETER;
     private int flexibleMiddleLayers = MIN_FLEXIBLE_MIDDLE_LAYERS;
     /**
-     * Set by {@link #formStructure(PatternMatchContext)}: true if any fuel port or control rod controller found
-     * among {@link #getMultiblockParts()} sits atop a channel column (layer 2, directly below it) that is not
-     * uniformly filled with its matching housing block. The structure pattern itself cannot express "this whole
-     * column is one block type," so this is verified at runtime instead -- see this class's own JavaDoc.
+     * Set by {@link #formStructure(PatternMatchContext)}: true if any fuel assembly port sits atop a channel
+     * column (from the layer directly below it down to the bottom cap) that is not uniformly filled with
+     * {@code fuel_rod_housing} (shown as "Fuel Assembly Housing"). The structure pattern cannot express "this whole
+     * column is one block type," so this is verified at runtime instead.
      */
-    private boolean fuelControlRodHousingMismatch = false;
+    private boolean housingMismatch = false;
+    /**
+     * Set by {@link #formStructure(PatternMatchContext)} and every shape recompute: true if any loaded fuel
+     * assembly or control rod cluster is longer than this vessel's channel height (stage 1-3, 2026-11-21) --
+     * possible when a loaded vessel is rebuilt shorter. Blocks startup; the slot rules already prevent inserting
+     * one in the first place.
+     */
+    private boolean lengthMismatch = false;
+    /**
+     * Latched by {@link #invalidateStructure()} when the structure breaks while running (stage 1-3) -- shown on
+     * the console until the next manual reset, and persisted so a reload does not hide it.
+     */
+    private boolean structureBreachRecorded = false;
 
-    /** Read by the control console screen part over the reactor-console link -- see this class's own JavaDoc. */
-    public boolean isFuelControlRodHousingMismatch() {
-        return fuelControlRodHousingMismatch;
+    /** Read by the control console screen part over the reactor-console link, and by {@link AccidentHost}. */
+    @Override
+    public boolean isHousingMismatch() {
+        return housingMismatch;
     }
 
+    /** Read by the control console screen part over the reactor-console link. */
+    public boolean isLengthMismatch() {
+        return lengthMismatch;
+    }
+
+    /** Read by the control console screen part over the reactor-console link. */
+    public boolean isStructureBreachRecorded() {
+        return structureBreachRecorded;
+    }
+
+    /** What occupies one interior (channel) cell of the top cap, for the console's core map. */
+    public enum CellKind {
+        /** Plain vessel casing: no port, the channel is a water column. */
+        CASING,
+        /** A fuel assembly port without a fuel assembly loaded (also a water column). */
+        EMPTY_PORT,
+        /** A fuel assembly port with a fuel assembly loaded. */
+        FUEL
+    }
+
+    /** Sentinel for {@link CoreMapCell#rodLevel}: no intact control rod cluster in this channel. */
+    public static final byte NO_ROD = -1;
+
     /**
-     * One fuel port or control rod controller's position (relative to the controller) and a single generic
-     * "0 = good, 1 = needs attention" gauge -- exactly the data {@code MetaTileEntityConsoleScreen}'s core map
-     * needs to draw itself, both cell types sharing the same green-to-red gradient treatment. For a control rod,
-     * {@code degradationLevel} is its current insertion depth (0 = withdrawn, 1 = fully inserted -- "inserted" is
-     * not literally bad, just the end of the gradient the old insertion-depth coloring already used). For a fuel
-     * port, it is {@code 1 - ItemFuelRod#getFissileCapabilityFraction} of whatever rod is loaded (0 = fresh,
-     * trending towards 1 as fissile content depletes -- 2026-10, roadmap item E, "fuel replacement recommended
-     * UI": this mod's design memory explicitly left the display location to implementer discretion, and the core
-     * map already had the exact gradient machinery a control rod's insertion depth needed). An empty fuel port
-     * reads as {@code 0.0} (same as before this field had any fuel-specific meaning at all -- distinguishing
-     * "empty" from "full and fresh" is not this feature's scope).
+     * One interior channel cell as synced to the console's core map (stage 1-3 (c)): its position relative to
+     * the controller, what occupies it, the fuel's depletion level ({@code 0-100}, {@code 1 -
+     * getFissileCapabilityFraction} in percent; 0 for non-fuel cells) and the control rod cluster's insertion
+     * ({@code 0-100}, or {@link #NO_ROD}).
      * <p>
-     * A plain snapshot rather than the live {@link IMultiblockPart} reference: {@link #getMultiblockParts()} is
-     * server-only bookkeeping (see this mod's design memory for this exact recurring pitfall -- confirmed here
-     * too, the core map silently rendered nothing on the client until this was introduced), so
-     * {@link #updateCoreMapCells()} resolves it server-side every tick and {@link #coreMapCells} is synced as
-     * plain data instead.
+     * A plain snapshot rather than a live {@link IMultiblockPart} reference: {@link #getMultiblockParts()} is
+     * server-only bookkeeping, so {@link #updateCoreMapCells()} resolves it server-side and {@link #coreMapCells}
+     * is synced as plain data instead.
      */
-    public record CoreMapCell(int dx, int dz, boolean isFuel, double degradationLevel) {}
+    public record CoreMapCell(int dx, int dz, @NotNull CellKind kind, byte depletionPercent, byte rodLevel) {
+
+        public boolean hasRod() {
+            return rodLevel != NO_ROD;
+        }
+    }
 
     private List<CoreMapCell> coreMapCells = new ArrayList<>();
 
     /**
-     * Every currently-loaded fuel port/control rod controller, refreshed once per tick by
-     * {@link #updateChannelCaches()} and reused by every other per-tick method below instead of each re-walking
-     * {@link #getMultiblockParts()} (and re-running its own {@code instanceof} checks against every other part
-     * type -- fluid hatches, the console link, etc.) independently. Added 2026-10-06 (Java 25 upgrade
-     * optimization pass, see this mod's design memory): a real measurement found 17 separate
-     * {@code getMultiblockParts()} loops in this class, at least 6 of them (fuel burnup, local Doppler/Xenon,
-     * local MTC, control rod summaries/reactivity, core map cells) running every single tick. Includes every
-     * fuel port regardless of whether it currently holds a rod (callers that only want loaded ones, e.g.
-     * {@link #updateFuelBurnup()}, filter that themselves, same as before this change).
+     * Every fuel assembly port in the structure, refreshed once per tick by {@link #updateChannelCaches()} and
+     * reused by every per-tick method instead of each re-walking {@link #getMultiblockParts()} (2026-10-06
+     * optimization, kept through the stage 1-3 port merge).
      */
     @NotNull
-    private List<MetaTileEntityFuelPort> cachedFuelPorts = new ArrayList<>();
-    /** See {@link #cachedFuelPorts}'s own JavaDoc. */
+    private List<MetaTileEntityFuelAssemblyPort> cachedAssemblyPorts = new ArrayList<>();
+    /** The subset of {@link #cachedAssemblyPorts} with a fuel assembly loaded. */
     @NotNull
-    private List<MetaTileEntityControlRodController> cachedControlRods = new ArrayList<>();
+    private List<MetaTileEntityFuelAssemblyPort> cachedFuelPorts = new ArrayList<>();
+    /** The subset of {@link #cachedAssemblyPorts} with an intact control rod cluster loaded. */
+    @NotNull
+    private List<MetaTileEntityFuelAssemblyPort> cachedControlRods = new ArrayList<>();
 
-    /** See {@link #cachedFuelPorts}'s own JavaDoc. Must run before any other method that reads either cache. */
+    /** See {@link #cachedAssemblyPorts}'s own JavaDoc. Must run before any other method that reads the caches. */
     private void updateChannelCaches() {
-        List<MetaTileEntityFuelPort> fuelPorts = new ArrayList<>();
-        List<MetaTileEntityControlRodController> controlRods = new ArrayList<>();
+        List<MetaTileEntityFuelAssemblyPort> ports = new ArrayList<>();
+        List<MetaTileEntityFuelAssemblyPort> fuelPorts = new ArrayList<>();
+        List<MetaTileEntityFuelAssemblyPort> controlRods = new ArrayList<>();
         for (IMultiblockPart part : getMultiblockParts()) {
-            if (part instanceof MetaTileEntityFuelPort fuelPort) {
-                fuelPorts.add(fuelPort);
-            } else if (part instanceof MetaTileEntityControlRodController controlRod) {
-                controlRods.add(controlRod);
+            if (part instanceof MetaTileEntityFuelAssemblyPort port) {
+                ports.add(port);
+                if (port.hasFuel()) fuelPorts.add(port);
+                if (port.hasControlRod()) controlRods.add(port);
             }
         }
+        cachedAssemblyPorts = ports;
         cachedFuelPorts = fuelPorts;
         cachedControlRods = controlRods;
+    }
+
+    /** Client-synced copies of the cache sizes and startup check (see {@link #updateSyncedCoreSummary()}). */
+    private int loadedFuelAssemblyCountSynced = 0;
+    private int loadedControlRodClusterCountSynced = 0;
+    @Nullable
+    private ReactorStartupRequirements.Blocker startupBlocker = null;
+
+    /** Server side, once per tick after the caches are refreshed. */
+    private void updateSyncedCoreSummary() {
+        loadedFuelAssemblyCountSynced = cachedFuelPorts.size();
+        loadedControlRodClusterCountSynced = cachedControlRods.size();
+        startupBlocker = getStartupBlocker();
+    }
+
+    /** Number of loaded fuel assemblies (client-synced). */
+    public int getLoadedFuelAssemblyCount() {
+        return loadedFuelAssemblyCountSynced;
+    }
+
+    /** Number of loaded intact control rod clusters (client-synced). */
+    public int getLoadedControlRodClusterCount() {
+        return loadedControlRodClusterCountSynced;
+    }
+
+    /** The first unmet startup precondition as last synced, or {@code null} if startup may begin. */
+    @Nullable
+    public ReactorStartupRequirements.Blocker getSyncedStartupBlocker() {
+        return startupBlocker;
     }
 
     /** Read by the control console screen part over the reactor-console link. */
@@ -270,32 +330,66 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         return coreMapCells;
     }
 
+    @Nullable
+    private ReactorCrossSection cachedCrossSection;
+
+    /** The current diameter's cross-section (rebuilt only when the diameter changes). */
+    @NotNull
+    private ReactorCrossSection crossSection() {
+        if (cachedCrossSection == null || cachedCrossSection.diameter() != diameter) {
+            cachedCrossSection = ReactorCrossSection.of(diameter);
+        }
+        return cachedCrossSection;
+    }
+
     /**
-     * Server-side snapshot of every fuel port/control rod controller's position and (for control rods) insertion
-     * depth -- see {@link CoreMapCell}'s own JavaDoc for why this indirection exists.
+     * World position of the top-cap cell at the given cross-section offset -- the disk center is
+     * {@code radius} blocks behind the controller (which sits on the front wall), and the top cap is
+     * {@link #channelTopYRelative()} above it. Columns run along {@code frontFacing.rotateY()}; the disk is
+     * mirror-symmetric, so the lateral sign does not matter.
+     */
+    @NotNull
+    private BlockPos topCapPosition(@NotNull ReactorCrossSection.Cell cell) {
+        EnumFacing back = getFrontFacing().getOpposite();
+        EnumFacing lateral = getFrontFacing().rotateY();
+        return getPos().offset(back, diameter / 2 + cell.rowOffset()).offset(lateral, cell.columnOffset())
+                .up(channelTopYRelative());
+    }
+
+    /**
+     * Server-side snapshot of every interior channel cell -- see {@link CoreMapCell}'s own JavaDoc. Cells without
+     * a port are listed too, so the console can show the whole core layout rather than only the loaded part.
      */
     private void updateCoreMapCells() {
+        Map<Long, MetaTileEntityFuelAssemblyPort> portsByPos = new HashMap<>();
+        for (MetaTileEntityFuelAssemblyPort port : cachedAssemblyPorts) portsByPos.put(port.getPos().toLong(), port);
         List<CoreMapCell> cells = new ArrayList<>();
-        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
-            BlockPos pos = fuelPort.getPos();
-            ItemStack stack = fuelPort.getInsertedItem();
-            double degradation = stack.getItem() instanceof ItemFuelRod fuelRod ?
-                    1.0 - fuelRod.getFissileCapabilityFraction(stack) : 0.0;
-            cells.add(new CoreMapCell(pos.getX() - getPos().getX(), pos.getZ() - getPos().getZ(), true, degradation));
-        }
-        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
-            BlockPos pos = controlRod.getPos();
-            cells.add(new CoreMapCell(pos.getX() - getPos().getX(), pos.getZ() - getPos().getZ(), false,
-                    controlRod.getInsertionDepth()));
+        for (ReactorCrossSection.Cell cell : crossSection().interiorCells()) {
+            BlockPos pos = topCapPosition(cell);
+            int dx = pos.getX() - getPos().getX();
+            int dz = pos.getZ() - getPos().getZ();
+            MetaTileEntityFuelAssemblyPort port = portsByPos.get(pos.toLong());
+            if (port == null) {
+                cells.add(new CoreMapCell(dx, dz, CellKind.CASING, (byte) 0, NO_ROD));
+                continue;
+            }
+            CellKind kind = port.hasFuel() ? CellKind.FUEL : CellKind.EMPTY_PORT;
+            byte depletion = 0;
+            if (port.getFuelStack().getItem() instanceof ItemFuelRod fuelRod) {
+                depletion = (byte) Math.round(100.0 *
+                        (1.0 - fuelRod.getFissileCapabilityFraction(port.getFuelStack())));
+            }
+            byte rod = port.hasControlRod() ? (byte) Math.round(100.0 * port.getInsertionDepth()) : NO_ROD;
+            cells.add(new CoreMapCell(dx, dz, kind, depletion, rod));
         }
         coreMapCells = cells;
     }
 
     /**
-     * One control rod controller's position (relative to the controller), current bank assignment, and
-     * insertion depth -- what the console's control rod list (stage 5 of this mod's startup/shutdown sequence
-     * work, 2026-09-21) needs to render itself and target bank-cycle clicks. Same indirection reasoning as
-     * {@link CoreMapCell}: a synced snapshot, not a live {@link IMultiblockPart} reference.
+     * One control rod cluster's position (relative to the controller), current bank assignment, and insertion
+     * depth -- what the console's control rod list needs to render itself and target bank-cycle clicks. Same
+     * indirection reasoning as {@link CoreMapCell}: a synced snapshot, not a live {@link IMultiblockPart}
+     * reference.
      */
     public record ControlRodSummary(int dx, int dz, int bankId, double insertionDepth) {}
 
@@ -310,7 +404,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     /** Server-side snapshot backing {@link #controlRodSummaries} -- see {@link ControlRodSummary}'s own JavaDoc. */
     private void updateControlRodSummaries() {
         List<ControlRodSummary> summaries = new ArrayList<>();
-        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
+        for (MetaTileEntityFuelAssemblyPort controlRod : cachedControlRods) {
             BlockPos pos = controlRod.getPos();
             summaries.add(new ControlRodSummary(pos.getX() - getPos().getX(), pos.getZ() - getPos().getZ(),
                     controlRod.getBankId(), controlRod.getInsertionDepth()));
@@ -319,39 +413,113 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     }
 
     /**
-     * Console write-direction command: cycle the control rod controller at world offset ({@code dx}, {@code dz})
-     * (relative to this controller) through {@code 0 -> 1 -> ... -> BANK_COUNT -> 0}. A no-op if no controller
-     * exists at that offset (e.g. it was removed between the console's last sync and this click).
+     * Console write-direction command: cycle the control rod cluster at world offset ({@code dx}, {@code dz})
+     * (relative to this controller) through {@code 0 -> 1 -> ... -> BANK_COUNT -> 0}. A no-op if no cluster is
+     * loaded at that offset (e.g. it was removed between the console's last sync and this click).
      */
     public void requestCycleControlRodBank(int dx, int dz) {
-        for (IMultiblockPart part : getMultiblockParts()) {
-            if (part instanceof MetaTileEntityControlRodController controlRod) {
-                BlockPos pos = controlRod.getPos();
-                if (pos.getX() - getPos().getX() == dx && pos.getZ() - getPos().getZ() == dz) {
-                    controlRod.setBankId((controlRod.getBankId() + 1) %
-                            (MetaTileEntityControlRodController.BANK_COUNT + 1));
-                    markDirty();
-                    return;
-                }
+        for (MetaTileEntityFuelAssemblyPort controlRod : cachedControlRods) {
+            BlockPos pos = controlRod.getPos();
+            if (pos.getX() - getPos().getX() == dx && pos.getZ() - getPos().getZ() == dz) {
+                controlRod.setBankId((controlRod.getBankId() + 1) % (MetaTileEntityFuelAssemblyPort.BANK_COUNT + 1));
+                markDirty();
+                return;
             }
         }
     }
 
     /**
-     * Console write-direction command: nudge every control rod controller assigned to {@code bankId} (0-
-     * {@link MetaTileEntityControlRodController#BANK_COUNT}, 0 being the default "unassigned" bank -- see
-     * {@link #requestCycleControlRodBank}'s own JavaDoc) by {@code deltaFraction} (e.g. +-0.01 for a +-1% step) --
-     * deliberately a manual per-click nudge, not a one-shot "withdraw/insert fully" jump, per this mod's design
-     * memory (2026-09-17: "自動引き抜きボタンは採用しない"), just applied to a whole bank at once instead of one
-     * controller at a time.
+     * Console write-direction command: nudge every control rod cluster assigned to {@code bankId} (0-
+     * {@link MetaTileEntityFuelAssemblyPort#BANK_COUNT}, 0 being the default "unassigned" bank) by
+     * {@code deltaFraction} (e.g. +-0.01 for a +-1% step) -- deliberately a manual per-click nudge, not a one-shot
+     * "withdraw/insert fully" jump, per this mod's design memory (2026-09-17: "自動引き抜きボタンは採用しない").
      */
     public void requestNudgeBank(int bankId, double deltaFraction) {
-        for (IMultiblockPart part : getMultiblockParts()) {
-            if (part instanceof MetaTileEntityControlRodController controlRod && controlRod.getBankId() == bankId) {
+        // Stage 1-1 (2026-11-21): a tripped reactor's rods are dropping/latched in (see applyScramRodDrop()), so
+        // any withdrawal command -- manual console click or ReactorAutoControlSequencer alike -- is refused until
+        // a manual reset; insertion is still harmless and allowed.
+        if (operatingState.stage == ReactorOperatingStage.TRIPPED && deltaFraction < 0) return;
+        for (MetaTileEntityFuelAssemblyPort controlRod : cachedControlRods) {
+            if (controlRod.getBankId() == bankId) {
                 controlRod.setInsertionDepth(controlRod.getInsertionDepth() + deltaFraction);
             }
         }
         markDirty();
+    }
+
+    // ---------------------------------------------------------------- fuel assembly port support (stage 1-3)
+
+    /** Rel. Y of the lowest channel layer (directly above the solid bottom cap). */
+    private static final int CHANNEL_BOTTOM_Y_RELATIVE = -LAYERS_BELOW_CONTROLLER + 1;
+
+    /** Rel. Y of the top cap, where the fuel assembly ports sit. */
+    private int channelTopYRelative() {
+        return flexibleMiddleLayers + FIXED_LAYERS_ABOVE_CONTROLLER;
+    }
+
+    /**
+     * The channel height H in layers (stage 1-3 (b)): from the layer above the bottom cap up to and including the
+     * top cap, i.e. {@code totalHeight - 1}. A fuel assembly or control rod cluster may be at most this long.
+     */
+    public int getChannelHeightLayers() {
+        return channelTopYRelative() - CHANNEL_BOTTOM_Y_RELATIVE + 1;
+    }
+
+    /**
+     * Maintenance lock (stage 1-3 (a), interim until stage 1-4's REFUELING stage): fuel assemblies and inserts
+     * may only be moved while the formed reactor is in {@link ReactorOperatingStage#SHUTDOWN}.
+     */
+    public boolean isFuelHandlingAllowed() {
+        return operatingState.stage == ReactorOperatingStage.SHUTDOWN;
+    }
+
+    /** Next tick's {@link #updatePhysicsShape()} recomputes immediately (a port's contents changed). */
+    public void requestShapeRecompute() {
+        physicsShapeTicksUntilRecompute = 0;
+    }
+
+    /** Per-port local values for the port's own UI; {@link #NONE} when nothing is known. */
+    public record PortTelemetry(double localRelativePower, double xenonPcm, double fuelTemperatureKelvin) {
+
+        public static final PortTelemetry NONE = new PortTelemetry(Double.NaN, Double.NaN, Double.NaN);
+    }
+
+    /** Server side: the given port's local power, xenon worth and local fuel temperature from the last CMFD shape. */
+    @NotNull
+    public PortTelemetry getPortTelemetry(@NotNull MetaTileEntityFuelAssemblyPort port) {
+        ItemStack stack = port.getFuelStack();
+        if (cmfdResult == null || !(stack.getItem() instanceof ItemFuelRod fuelRod)) return PortTelemetry.NONE;
+        NodePosition topPosition = fuelPortTopPosition(port);
+        double fastFlux = cmfdResult.fastFlux().getOrDefault(topPosition, 0.0);
+        double thermalFlux = cmfdResult.thermalFlux().getOrDefault(topPosition, 0.0);
+        double globalRelativePower = pointKineticsState.relativeNeutronPopulation;
+        double localRelativePower = (fastFlux + thermalFlux) * globalRelativePower;
+        double fuelCoolantUA = computeFuelCoolantUA();
+        double temperatureSensitivity = fuelCoolantUA > 0 ? computeRatedThermalPowerWatts() / fuelCoolantUA : 0.0;
+        double localFuelTemperature = fuelTemperatureKelvin +
+                temperatureSensitivity * (localRelativePower - globalRelativePower);
+        double xenonPcm = -fuelRod.getLocalXenonIodineState(stack, xenonIodineState).xenonConcentration() * 1.0e5;
+        return new PortTelemetry(localRelativePower, xenonPcm, localFuelTemperature);
+    }
+
+    /** Whether any loaded assembly or insert is longer than the channel (see {@link #lengthMismatch}). */
+    private boolean computeLengthMismatch() {
+        int height = getChannelHeightLayers();
+        for (MetaTileEntityFuelAssemblyPort port : cachedAssemblyPorts) {
+            if (port.getFuelLength() > height || port.getInsertLength() > height) return true;
+        }
+        return false;
+    }
+
+    /** The first unmet startup precondition, or {@code null} if startup may begin. Server side. */
+    @Nullable
+    public ReactorStartupRequirements.Blocker getStartupBlocker() {
+        return ReactorStartupRequirements.firstBlocker(new ReactorStartupRequirements.Inputs(housingMismatch,
+                lengthMismatch, cachedFuelPorts.size(), cachedControlRods.size(), rcpRunning, coolantMassKg,
+                computeRatedCoolantMassKg() * ConfigHolder.reactor.startupCoolantReadyFraction, pressureMPa,
+                ConfigHolder.reactor.targetOperatingPressureMPa * ConfigHolder.reactor.startupPressureReadyFraction,
+                temperatureKelvin,
+                ConfigHolder.reactor.heatupTargetTemperatureKelvin * ConfigHolder.reactor.startupHeatupReadyFraction));
     }
 
     /**
@@ -400,8 +568,20 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
      * {@link #coolantMassKg} reaches {@link #computeRatedCoolantMassKg()}.
      */
     private boolean coolantInjectionActive = false;
-    /** Primary coolant pressure (MPa), an operator-managed status value -- see this mod's design memory. */
-    private double pressureMPa = 0.0;
+    /**
+     * Primary coolant pressure (MPa, <b>absolute</b>), an operator-managed status value -- see this mod's design
+     * memory. Never below {@link #ATMOSPHERIC_PRESSURE_MPA} (stage 1-2, 2026-11-21): a depressurized loop is vented
+     * to atmosphere, not evacuated -- see {@link WaterSaturationCurve#ATMOSPHERIC_PRESSURE_PASCALS}'s own JavaDoc
+     * for the real-playtest bug the previous 0 MPa floor caused.
+     */
+    private double pressureMPa = ATMOSPHERIC_PRESSURE_MPA;
+    private static final double ATMOSPHERIC_PRESSURE_MPA = WaterSaturationCurve.ATMOSPHERIC_PRESSURE_PASCALS / 1.0e6;
+    /**
+     * Relative neutron population at or above which the core counts as an active heat source for
+     * {@link #hasCoreHeatSource()} (stage 1-2, 2026-11-21) -- a provisional 0.01% of rated, to be replaced by a
+     * fission + decay heat power threshold once decay heat exists (stage 2).
+     */
+    private static final double CORE_HEAT_SOURCE_RELATIVE_POWER_THRESHOLD = 1.0e-4;
     /**
      * Whether the console's "begin pressurization" command is currently active -- provisional (stage 3 of this
      * mod's startup/shutdown sequence work, 2026-09-21) pending the secondary coolant loop design, see
@@ -424,6 +604,250 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
      * Display-only, not persisted.
      */
     private int primaryCirculationFlowMb = 0;
+
+    // ---------------------------------------------------------------- RCP and RHR (stage 1-4a, 2026-11-24)
+
+    /**
+     * Whether the reactor coolant pumps are running -- an explicit operator command since stage 1-4a (before
+     * that the pumps were implicitly always on, and forced to full heatup duty while SHUTDOWN below
+     * {@code heatupTargetTemperatureKelvin}). Heatup by pump heat and circulation to the heat exchanger both
+     * happen only while running. Stopping is refused while STARTUP/OPERATING/SHUTTING_DOWN (in a real PWR a reactor
+     * coolant pump trip is itself a reactor trip, so the command simply is not offered then). Defaults to running so
+     * worlds saved before this field existed keep their old behavior.
+     */
+    private boolean rcpRunning = true;
+
+    /** Whether the residual heat removal system has been placed in service -- see {@link ResidualHeatRemoval}. */
+    private boolean rhrInService = false;
+
+    /** The last RHR event worth showing on the console (a refused start or an automatic isolation). */
+    public enum RhrNotice {
+        NONE,
+        START_REFUSED_TEMPERATURE,
+        START_REFUSED_PRESSURE,
+        ISOLATED_OVERPRESSURE
+    }
+
+    @NotNull
+    private RhrNotice rhrNotice = RhrNotice.NONE;
+
+    // Display-only RHR values for the last tick (synced, not persisted).
+    private double rhrHeatRemovalWatts = 0.0;
+    private double rhrCoolingInletKelvin = 0.0;
+    private double rhrCoolingOutletKelvin = 0.0;
+    private double rhrCoolingFlowKgPerSecond = 0.0;
+    private boolean rhrOutletCapped = false;
+    private boolean rhrNoPower = false;
+    private boolean rhrNoCoolingWater = false;
+
+    public boolean isRcpRunning() {
+        return rcpRunning;
+    }
+
+    public boolean isRhrInService() {
+        return rhrInService;
+    }
+
+    @NotNull
+    public RhrNotice getRhrNotice() {
+        return rhrNotice;
+    }
+
+    public double getRhrHeatRemovalWatts() {
+        return rhrHeatRemovalWatts;
+    }
+
+    public double getRhrCoolingInletKelvin() {
+        return rhrCoolingInletKelvin;
+    }
+
+    public double getRhrCoolingOutletKelvin() {
+        return rhrCoolingOutletKelvin;
+    }
+
+    public double getRhrCoolingFlowKgPerSecond() {
+        return rhrCoolingFlowKgPerSecond;
+    }
+
+    public boolean isRhrOutletCapped() {
+        return rhrOutletCapped;
+    }
+
+    public boolean isRhrNoPower() {
+        return rhrNoPower;
+    }
+
+    public boolean isRhrNoCoolingWater() {
+        return rhrNoCoolingWater;
+    }
+
+    /** Console command: start or stop the reactor coolant pumps (stopping refused while running the core). */
+    public void requestToggleRcp() {
+        if (rcpRunning) {
+            ReactorOperatingStage stage = operatingState.stage;
+            if (stage == ReactorOperatingStage.STARTUP || stage == ReactorOperatingStage.OPERATING ||
+                    stage == ReactorOperatingStage.SHUTTING_DOWN) {
+                return;
+            }
+            rcpRunning = false;
+        } else {
+            rcpRunning = true;
+        }
+        writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+        markDirty();
+    }
+
+    /**
+     * Console command: place RHR in service (only if {@link ResidualHeatRemoval#startBlocker} allows it, otherwise
+     * the refusal reason is shown) or take it out of service (always allowed).
+     */
+    public void requestToggleRhr() {
+        if (rhrInService) {
+            rhrInService = false;
+            rhrNotice = RhrNotice.NONE;
+        } else {
+            ResidualHeatRemoval.StartBlocker blocker = ResidualHeatRemoval.startBlocker(temperatureKelvin,
+                    pressureMPa, ConfigHolder.reactor.rhrMaxStartTemperatureKelvin,
+                    ConfigHolder.reactor.rhrMaxStartPressureMPa);
+            if (blocker == null) {
+                rhrInService = true;
+                rhrNotice = RhrNotice.NONE;
+            } else {
+                rhrNotice = blocker == ResidualHeatRemoval.StartBlocker.TEMPERATURE_TOO_HIGH ?
+                        RhrNotice.START_REFUSED_TEMPERATURE : RhrNotice.START_REFUSED_PRESSURE;
+            }
+        }
+        writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+        markDirty();
+    }
+
+    /** This reactor's rated thermal power relative to the plant the {@code rhr*} config values describe. */
+    private double rhrScale() {
+        double reference = ConfigHolder.reactor.rhrReferenceThermalPowerWatts;
+        return reference > 0 ? computeRatedThermalPowerWatts() / reference : 0.0;
+    }
+
+    /**
+     * One tick of the residual heat removal system: draws RHR pump power, moves cooling water from the import to
+     * the export hatch(es) (outlet temperature band from the heat exchanger result), and records the energy in
+     * {@link #energyLedger}. Called before the fuel-coolant sub-step loop using the tick-start coolant temperature.
+     *
+     * @return net heat (W) into the primary coolant this tick: RHR pump heat minus heat removed
+     */
+    private double updateResidualHeatRemoval() {
+        rhrHeatRemovalWatts = 0.0;
+        rhrCoolingFlowKgPerSecond = 0.0;
+        rhrOutletCapped = false;
+        rhrNoPower = false;
+        rhrNoCoolingWater = false;
+        if (!rhrInService) return 0.0;
+        if (ResidualHeatRemoval.mustIsolate(pressureMPa, ConfigHolder.reactor.rhrIsolationPressureMPa)) {
+            rhrInService = false;
+            rhrNotice = RhrNotice.ISOLATED_OVERPRESSURE;
+            writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+            markDirty();
+            return 0.0;
+        }
+
+        double scale = rhrScale();
+        long desiredEu = Math.round(ConfigHolder.reactor.rhrPumpEuPerTick * scale);
+        long drawnEu = ReactorPowerConsumption.drawEnergy(
+                new EnergyContainerList(getAbilities(MultiblockAbility.INPUT_ENERGY)), desiredEu);
+        totalPowerConsumptionEuPerTick += drawnEu;
+        double pumpFraction = desiredEu > 0 ? (double) drawnEu / desiredEu : 1.0;
+        if (pumpFraction <= 0) {
+            rhrNoPower = true;
+            return 0.0;
+        }
+        double pumpHeatWatts = ConfigHolder.reactor.rhrPumpHeatWatts * scale * pumpFraction;
+        energyLedger.add(ReactorEnergyCategory.RHR_PUMP, pumpHeatWatts * TICK_SECONDS);
+
+        // Primary flow can never exceed the whole coolant inventory per tick -- with epsilon <= 1 that keeps the
+        // removed heat below m * c * (T - T_cooling,in), so the forward-Euler update cannot overshoot.
+        double primaryFlowKgPerSecond = Math.min(ConfigHolder.reactor.rhrPrimaryFlowKgPerSecond * scale * pumpFraction,
+                coolantMassKg / TICK_SECONDS);
+
+        // Cooling water available this tick (simulated), with its mass-weighted inlet temperature.
+        int desiredMb = (int) Math.round(ConfigHolder.reactor.rhrCoolingWaterFlowKgPerSecond * scale *
+                TICK_SECONDS * 1000.0);
+        int availableMb = 0;
+        double inletEnthalpySum = 0.0;
+        for (IFluidTank tank : getAbilities(GTNLMultiblockAbility.RHR_COOLING_WATER_IMPORT)) {
+            if (availableMb >= desiredMb) break;
+            FluidStack simulated = tank.drain(desiredMb - availableMb, false);
+            if (simulated == null || simulated.amount <= 0) continue;
+            availableMb += simulated.amount;
+            inletEnthalpySum += simulated.amount * (double) simulated.getFluid().getTemperature();
+        }
+        if (availableMb <= 0) {
+            rhrNoCoolingWater = true;
+            return pumpHeatWatts;
+        }
+        double inletKelvin = inletEnthalpySum / availableMb;
+        rhrCoolingInletKelvin = inletKelvin;
+
+        // Size the exchange to what the export side accepts (one re-evaluation if it accepts less).
+        int flowMb = availableMb;
+        ResidualHeatRemoval.Exchange exchange = rhrExchange(primaryFlowKgPerSecond, inletKelvin, flowMb);
+        Fluid outletFluid = GTNLMaterials.nearestCoolingWaterBandFluid(exchange.coolingOutletKelvin());
+        int acceptedMb = fillCoolingWaterExport(outletFluid, flowMb, false);
+        if (acceptedMb < flowMb) {
+            flowMb = acceptedMb;
+            if (flowMb > 0) {
+                exchange = rhrExchange(primaryFlowKgPerSecond, inletKelvin, flowMb);
+                outletFluid = GTNLMaterials.nearestCoolingWaterBandFluid(exchange.coolingOutletKelvin());
+                flowMb = Math.min(flowMb, fillCoolingWaterExport(outletFluid, flowMb, false));
+            }
+        }
+        if (flowMb <= 0) {
+            rhrNoCoolingWater = true;
+            return pumpHeatWatts;
+        }
+
+        // Commit: drain exactly what the export took.
+        int drainedMb = 0;
+        for (IFluidTank tank : getAbilities(GTNLMultiblockAbility.RHR_COOLING_WATER_IMPORT)) {
+            if (drainedMb >= flowMb) break;
+            FluidStack drained = tank.drain(flowMb - drainedMb, true);
+            if (drained != null) drainedMb += drained.amount;
+        }
+        fillCoolingWaterExport(outletFluid, drainedMb, true);
+        if (drainedMb <= 0) {
+            rhrNoCoolingWater = true;
+            return pumpHeatWatts;
+        }
+        // Final evaluation at the flow actually moved (the outlet band was chosen just above; any difference is
+        // band rounding outside this reactor's own boundary).
+        exchange = rhrExchange(primaryFlowKgPerSecond, inletKelvin, drainedMb);
+
+        double removedWatts = exchange.heatWatts() * ConfigHolder.reactor.rhrCooldownAssistFactor;
+        energyLedger.add(ReactorEnergyCategory.RHR, removedWatts * TICK_SECONDS);
+        rhrHeatRemovalWatts = removedWatts;
+        rhrCoolingOutletKelvin = exchange.coolingOutletKelvin();
+        rhrCoolingFlowKgPerSecond = drainedMb / 1000.0 / TICK_SECONDS;
+        rhrOutletCapped = exchange.outletCapped();
+        return pumpHeatWatts - removedWatts;
+    }
+
+    @NotNull
+    private ResidualHeatRemoval.Exchange rhrExchange(double primaryFlowKgPerSecond, double inletKelvin, int flowMb) {
+        return ResidualHeatRemoval.exchange(temperatureKelvin, inletKelvin, primaryFlowKgPerSecond,
+                flowMb / 1000.0 / TICK_SECONDS, ConfigHolder.reactor.rhrHeatExchangerUaWattsPerKelvin * rhrScale(),
+                CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY,
+                ResidualHeatRemoval.COOLING_WATER_SPECIFIC_HEAT,
+                CoolingWaterTemperatureBands.MAX_BAND_TEMPERATURE_KELVIN);
+    }
+
+    /** Fills up to {@code amountMb} of {@code fluid} across the cooling water export hatch(es). */
+    private int fillCoolingWaterExport(@NotNull Fluid fluid, int amountMb, boolean doFill) {
+        int filledMb = 0;
+        for (IFluidTank tank : getAbilities(GTNLMultiblockAbility.RHR_COOLING_WATER_EXPORT)) {
+            if (filledMb >= amountMb) break;
+            filledMb += tank.fill(new FluidStack(fluid, amountMb - filledMb), doFill);
+        }
+        return filledMb;
+    }
+
     /** Primary coolant boron concentration (ppm), an operator-managed status value. */
     private double boronPpm = 0.0;
     /**
@@ -473,6 +897,12 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     @Nullable
     private ReactorTelemetryLogger telemetryLogger = null;
     /**
+     * Stage 0-3 of this mod's reactor physics rework (2026-11-21, see this mod's design memory): per-category
+     * energy bookkeeping over one telemetry interval, logged by {@link #telemetryLogger} and then reset -- see
+     * {@link EnergyLedger}'s own JavaDoc. Not persisted; a world reload just starts a fresh window.
+     */
+    private final EnergyLedger<ReactorEnergyCategory> energyLedger = new EnergyLedger<>(ReactorEnergyCategory.class);
+    /**
      * Fuel's own temperature (Kelvin), decoupled from {@link #temperatureKelvin} (the primary coolant's) -- see
      * {@link #updateFuelAndCoolantThermal()}. A real meltdown is fundamentally a "fuel heats up faster than
      * coolant can carry the heat away" phenomenon, so a single shared temperature node cannot represent it.
@@ -511,6 +941,12 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     @Override
     public double getCoreFuelMassAtMeltdownStartKg() {
         return coreFuelMassAtMeltdownStartKg;
+    }
+
+    /** {@link AccidentHost#hasCoreHeatSource()} -- see {@link #CORE_HEAT_SOURCE_RELATIVE_POWER_THRESHOLD}. */
+    @Override
+    public boolean hasCoreHeatSource() {
+        return pointKineticsState.relativeNeutronPopulation >= CORE_HEAT_SOURCE_RELATIVE_POWER_THRESHOLD;
     }
 
     /**
@@ -803,17 +1239,17 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     }
 
     /**
-     * Total fuel mass (kg) currently loaded across every fuel port -- each rod nominally holds
-     * {@code ConfigHolder.reactor.fuelRodUraniumMassKg} of heavy metal, ignoring cladding mass and the (slight,
-     * mass-conserving) shift in isotope composition from burnup.
+     * Total UO2 fuel mass (kg) currently loaded -- each assembly holds {@code L *
+     * ConfigHolder.reactor.fuelUraniumPerLayerKg} of uranium (stage 1-3: proportional to its fabricated length),
+     * converted to oxide mass, ignoring cladding and the (slight, mass-conserving) composition shift from burnup.
      */
     @Override
     public double computeTotalCoreFuelMassKg() {
-        int loadedFuelPorts = 0;
-        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
-            if (fuelPort.getLoadedComposition() != null) loadedFuelPorts++;
+        double uraniumKg = 0.0;
+        for (MetaTileEntityFuelAssemblyPort fuelPort : cachedFuelPorts) {
+            uraniumKg += fuelPort.getFuelLength() * ConfigHolder.reactor.fuelUraniumPerLayerKg;
         }
-        return loadedFuelPorts * ConfigHolder.reactor.fuelRodUraniumMassKg;
+        return uraniumKg * ItemFuelRod.UO2_TO_URANIUM_MASS_RATIO;
     }
 
     /**
@@ -839,12 +1275,13 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         physicsShapeTicksUntilRecompute = PHYSICS_SHAPE_RECOMPUTE_INTERVAL_TICKS;
 
         advanceNeutronSourceDecay();
+        lengthMismatch = computeLengthMismatch();
 
         ReactorGeometry geometry = buildReactorGeometry();
         cmfdResult = geometry.size() > 0 ? CMFDSolver.solve(geometry) : null;
 
         List<FuelComposition> loadedCompositions = new ArrayList<>();
-        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
+        for (MetaTileEntityFuelAssemblyPort fuelPort : cachedFuelPorts) {
             FuelComposition composition = fuelPort.getLoadedComposition();
             if (composition != null) loadedCompositions.add(composition);
         }
@@ -913,32 +1350,29 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     }
 
     /**
-     * One CMFD node per (fuel port / control rod controller) per vertical layer of its own channel, from
-     * {@code channelBottomY} up to the port's own Y -- see this mod's design memory (2026-09-20) for why this is
-     * a "formal" 3D geometry (repeating the same node up the column) rather than one node per whole channel: the
-     * current block-level design has no way to place different fuel at different heights within one channel, so
-     * there is no per-height data to vary by, but the solver still resolves real axial leakage this way. Node
-     * positions are plain world-offset-from-controller coordinates, not the pattern generator's own row/column
-     * indices -- {@link ReactorGeometry} only needs consistent face-adjacency, not any particular numbering.
+     * One CMFD column per interior channel cell of the vessel (stage 1-3 (b), 2026-11-21), from
+     * {@link #CHANNEL_BOTTOM_Y_RELATIVE} up to the top cap: a loaded fuel assembly fills the bottom {@code L}
+     * layers of its column with its own composition and leaves water above it; a fuel-less port or a plain casing
+     * cell is a full water column. Control rod clusters do not change the shape (their worth is still the
+     * separate per-tick amplitude term until stage 4). Node positions are plain world offsets from the controller
+     * -- {@link ReactorGeometry} only needs consistent face-adjacency.
      */
     @NotNull
     private ReactorGeometry buildReactorGeometry() {
         ReactorGeometry geometry = new ReactorGeometry(CHANNEL_NODE_SIZE_CM);
         if (getWorld() == null) return geometry;
-        int channelBottomYRelative = -LAYERS_BELOW_CONTROLLER + 1;
-        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
-            BlockPos pos = fuelPort.getPos();
-            ReactorGeometryBuilder.addChannelColumn(geometry, pos.getX() - getPos().getX(),
-                    pos.getZ() - getPos().getZ(), channelBottomYRelative, pos.getY() - getPos().getY(),
-                    fuelPort.getLoadedComposition());
-        }
-        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
-            // Control rod channels always use a fixed moderator-like node regardless of insertion depth -- rod
-            // worth is a separate per-tick amplitude-stage term, not a CMFD shape input. See
-            // ReactorNodeFactory#moderatorNode's own JavaDoc.
-            BlockPos pos = controlRod.getPos();
-            ReactorGeometryBuilder.addChannelColumn(geometry, pos.getX() - getPos().getX(),
-                    pos.getZ() - getPos().getZ(), channelBottomYRelative, pos.getY() - getPos().getY(), null);
+        Map<Long, MetaTileEntityFuelAssemblyPort> fuelPortsByPos = new HashMap<>();
+        for (MetaTileEntityFuelAssemblyPort port : cachedFuelPorts) fuelPortsByPos.put(port.getPos().toLong(), port);
+        int topYRelative = channelTopYRelative();
+        for (ReactorCrossSection.Cell cell : crossSection().interiorCells()) {
+            BlockPos pos = topCapPosition(cell);
+            int dx = pos.getX() - getPos().getX();
+            int dz = pos.getZ() - getPos().getZ();
+            MetaTileEntityFuelAssemblyPort fuelPort = fuelPortsByPos.get(pos.toLong());
+            FuelComposition composition = fuelPort != null ? fuelPort.getLoadedComposition() : null;
+            int fuelLength = fuelPort != null ? Math.min(fuelPort.getFuelLength(), getChannelHeightLayers()) : 0;
+            ReactorGeometryBuilder.addFuelAssemblyColumn(geometry, dx, dz, CHANNEL_BOTTOM_Y_RELATIVE, topYRelative,
+                    fuelLength, composition);
         }
         return geometry;
     }
@@ -1012,14 +1446,16 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     }
 
     /**
-     * This fuel port's own channel-top CMFD node position, relative to this controller -- the shared key
-     * {@link #cmfdResult}'s flux maps are read by, both in {@link #updateFuelBurnup()} and every local-feedback
-     * method below.
+     * The CMFD node position of this port's fuel assembly's top fuel layer ({@code CHANNEL_BOTTOM + L - 1}, stage
+     * 1-3), relative to this controller -- the shared key {@link #cmfdResult}'s flux maps are read by, in
+     * {@link #updateFuelBurnup()}, every local-feedback method, and the control rod flux weighting (a cluster
+     * always sits in a fuelled channel: the slot rules require the fuel before the insert).
      */
     @NotNull
-    private NodePosition fuelPortTopPosition(@NotNull MetaTileEntityFuelPort fuelPort) {
+    private NodePosition fuelPortTopPosition(@NotNull MetaTileEntityFuelAssemblyPort fuelPort) {
         BlockPos pos = fuelPort.getPos();
-        return new NodePosition(pos.getX() - getPos().getX(), pos.getY() - getPos().getY(),
+        int length = Math.max(1, Math.min(fuelPort.getFuelLength(), getChannelHeightLayers()));
+        return new NodePosition(pos.getX() - getPos().getX(), CHANNEL_BOTTOM_Y_RELATIVE + length - 1,
                 pos.getZ() - getPos().getZ());
     }
 
@@ -1057,9 +1493,9 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
      * only at steady state.
      */
     private void updateLocalDopplerAndXenonReactivity() {
-        List<MetaTileEntityFuelPort> fuelPorts = new ArrayList<>();
-        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
-            if (fuelPort.getInsertedItem().getItem() instanceof ItemFuelRod) {
+        List<MetaTileEntityFuelAssemblyPort> fuelPorts = new ArrayList<>();
+        for (MetaTileEntityFuelAssemblyPort fuelPort : cachedFuelPorts) {
+            if (fuelPort.getFuelStack().getItem() instanceof ItemFuelRod) {
                 fuelPorts.add(fuelPort);
             }
         }
@@ -1082,8 +1518,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         double[] xenonWeights = new double[fuelPorts.size()];
 
         for (int i = 0; i < fuelPorts.size(); i++) {
-            MetaTileEntityFuelPort fuelPort = fuelPorts.get(i);
-            ItemStack stack = fuelPort.getInsertedItem();
+            MetaTileEntityFuelAssemblyPort fuelPort = fuelPorts.get(i);
+            ItemStack stack = fuelPort.getFuelStack();
             ItemFuelRod fuelRod = (ItemFuelRod) stack.getItem();
             NodePosition topPosition = fuelPortTopPosition(fuelPort);
             double fastFlux = cmfdResult.fastFlux().getOrDefault(topPosition, 0.0);
@@ -1127,8 +1563,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         double globalRelativePower = pointKineticsState.relativeNeutronPopulation;
         XenonIodineConstants xenonConstants = new XenonIodineConstants(ConfigHolder.reactor.xenonDeadTimeSeconds,
                 ConfigHolder.reactor.equilibriumXenonWorth);
-        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
-            ItemStack stack = fuelPort.getInsertedItem();
+        for (MetaTileEntityFuelAssemblyPort fuelPort : cachedFuelPorts) {
+            ItemStack stack = fuelPort.getFuelStack();
             if (!(stack.getItem() instanceof ItemFuelRod fuelRod)) continue;
 
             NodePosition topPosition = fuelPortTopPosition(fuelPort);
@@ -1184,28 +1620,28 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     private double computeLocalModeratorTemperatureReactivityPcm() {
         if (cmfdResult == null || getWorld() == null) return 0.0;
 
+        // Stage 1-3: every interior channel is a CMFD column (fuel below, water above / water only), so coolant
+        // weighting runs over all of them while fission only comes from the fuelled layers of fuelled columns.
         List<NodePosition> fuelColumnPositions = new ArrayList<>();
         List<ReactorNode> fuelColumnNodes = new ArrayList<>();
-        List<NodePosition> rodColumnPositions = new ArrayList<>();
-        Integer topWorldY = null;
-        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
+        List<Integer> fuelColumnTopY = new ArrayList<>();
+        for (MetaTileEntityFuelAssemblyPort fuelPort : cachedFuelPorts) {
             FuelComposition composition = fuelPort.getLoadedComposition();
             if (composition == null) continue;
             NodePosition topPosition = fuelPortTopPosition(fuelPort);
             fuelColumnPositions.add(topPosition);
             fuelColumnNodes.add(ReactorNodeFactory.fuelNode(topPosition, composition));
-            topWorldY = fuelPort.getPos().getY();
+            fuelColumnTopY.add(topPosition.y());
         }
-        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
-            BlockPos pos = controlRod.getPos();
-            rodColumnPositions.add(new NodePosition(pos.getX() - getPos().getX(), pos.getY() - getPos().getY(),
-                    pos.getZ() - getPos().getZ()));
-            topWorldY = pos.getY();
+        if (fuelColumnPositions.isEmpty()) return 0.0;
+        List<NodePosition> allColumnPositions = new ArrayList<>();
+        for (ReactorCrossSection.Cell cell : crossSection().interiorCells()) {
+            BlockPos pos = topCapPosition(cell);
+            allColumnPositions.add(new NodePosition(pos.getX() - getPos().getX(), 0, pos.getZ() - getPos().getZ()));
         }
-        if (topWorldY == null || fuelColumnPositions.isEmpty()) return 0.0;
 
-        int bottomLocalY = (getPos().getY() - LAYERS_BELOW_CONTROLLER + 1) - getPos().getY();
-        int topLocalY = topWorldY - getPos().getY();
+        int bottomLocalY = CHANNEL_BOTTOM_Y_RELATIVE;
+        int topLocalY = channelTopYRelative();
         int layerCount = topLocalY - bottomLocalY + 1;
         if (layerCount <= 0) return 0.0;
 
@@ -1216,16 +1652,16 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
             int index = y - bottomLocalY;
             double layerSum = 0.0;
             for (int i = 0; i < fuelColumnPositions.size(); i++) {
+                if (y > fuelColumnTopY.get(i)) continue;
                 NodePosition fuelXz = fuelColumnPositions.get(i);
                 NodePosition pos = new NodePosition(fuelXz.x(), y, fuelXz.z());
                 ReactorNode node = fuelColumnNodes.get(i);
                 double fastFlux = cmfdResult.fastFlux().getOrDefault(pos, 0.0);
                 double thermalFlux = cmfdResult.thermalFlux().getOrDefault(pos, 0.0);
                 layerSum += node.fast().nuFission() * fastFlux + node.thermal().nuFission() * thermalFlux;
-                layerThermalFluxSquaredSum[index] += thermalFlux * thermalFlux;
             }
-            for (NodePosition rodXz : rodColumnPositions) {
-                NodePosition pos = new NodePosition(rodXz.x(), y, rodXz.z());
+            for (NodePosition columnXz : allColumnPositions) {
+                NodePosition pos = new NodePosition(columnXz.x(), y, columnXz.z());
                 double thermalFlux = cmfdResult.thermalFlux().getOrDefault(pos, 0.0);
                 layerThermalFluxSquaredSum[index] += thermalFlux * thermalFlux;
             }
@@ -1292,8 +1728,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         double relativePower = pointKineticsState.relativeNeutronPopulation;
         if (relativePower <= 0) return;
         Map<Element, Element> captureDaughters = buildCaptureDaughters();
-        for (MetaTileEntityFuelPort fuelPort : cachedFuelPorts) {
-            ItemStack stack = fuelPort.getInsertedItem();
+        for (MetaTileEntityFuelAssemblyPort fuelPort : cachedFuelPorts) {
+            ItemStack stack = fuelPort.getFuelStack();
             if (!(stack.getItem() instanceof ItemFuelRod fuelRod)) continue;
 
             NodePosition topPosition = fuelPortTopPosition(fuelPort);
@@ -1314,17 +1750,15 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
      * inserted into the flux region. Reuses the same per-rod {@link #cmfdResult} thermal-flux sample as
      * {@link #sumControlRodReactivity()} -- a rod sitting withdrawn near 0 insertion depth barely wears regardless
      * of local flux, matching the real-world pattern of load-following banks wearing much faster than banks left
-     * withdrawn at rated power. {@link MetaTileEntityControlRodController#applyWear} itself no-ops for an empty
+     * withdrawn at rated power. {@link MetaTileEntityFuelAssemblyPort#applyWear} itself no-ops for an empty
      * slot or a non-rod item, so this loop does not need to check that first.
      */
     private void updateControlRodWear() {
         if (cmfdResult == null || getWorld() == null) return;
         double relativePower = pointKineticsState.relativeNeutronPopulation;
         if (relativePower <= 0) return;
-        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
-            BlockPos pos = controlRod.getPos();
-            NodePosition topPosition = new NodePosition(pos.getX() - getPos().getX(), pos.getY() - getPos().getY(),
-                    pos.getZ() - getPos().getZ());
+        for (MetaTileEntityFuelAssemblyPort controlRod : cachedControlRods) {
+            NodePosition topPosition = fuelPortTopPosition(controlRod);
             double thermalFlux = cmfdResult.thermalFlux().getOrDefault(topPosition, 0.0);
             double wear = ConfigHolder.reactor.controlRodWearRateCoefficient * controlRod.getInsertionDepth() *
                     thermalFlux * relativePower * TICK_SECONDS;
@@ -1361,6 +1795,9 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
 
         double fissionPowerWatts = computeRatedThermalPowerWatts() * pointKineticsState.relativeNeutronPopulation;
         double rcpHeatWatts = updateReactorPowerConsumption();
+        double rhrNetWatts = updateResidualHeatRemoval();
+        energyLedger.add(ReactorEnergyCategory.FISSION, fissionPowerWatts * TICK_SECONDS);
+        energyLedger.add(ReactorEnergyCategory.RCP, rcpHeatWatts * TICK_SECONDS);
         double totalFuelMassKg = computeTotalCoreFuelMassKg();
         double fuelHeatCapacity = totalFuelMassKg * FuelThermalConstants.SPECIFIC_HEAT_CAPACITY_J_PER_KG_KELVIN;
         double coolantHeatCapacity = coolantMassKg * CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY;
@@ -1377,7 +1814,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
             fuelTemperatureKelvin = step.fuelTemperatureKelvin();
             meltedFuelMassKg = step.meltedFuelMassKg();
             coreFuelMassAtMeltdownStartKg = step.coreFuelMassAtMeltdownStartKg();
-            temperatureKelvin = CoolantThermalSolver.advance(temperatureKelvin, transferWatts + rcpHeatWatts,
+            temperatureKelvin = CoolantThermalSolver.advance(temperatureKelvin,
+                    transferWatts + rcpHeatWatts + rhrNetWatts,
                     coolantMassKg, CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY, subDtSeconds);
         }
 
@@ -1420,8 +1858,10 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
                 ConfigHolder.reactor.baseConsumptionPerChannel));
         double pumpCoefficient = RatedCoolantMass.ratedMassKg(interiorCellCount,
                 ConfigHolder.reactor.pumpConsumptionPerInteriorCellAtRatedOutput);
-        long pumpDesiredEuPerTick = Math.round(ReactorPowerConsumption.pumpPowerEuPerTick(effectiveThermalOutputWatts,
-                ratedThermalPowerWatts, pumpCoefficient));
+        // Stage 1-4a: the pumps (and with them heatup and their friction heat) only run on operator command.
+        long pumpDesiredEuPerTick = !rcpRunning ? 0L :
+                Math.round(ReactorPowerConsumption.pumpPowerEuPerTick(effectiveThermalOutputWatts,
+                        ratedThermalPowerWatts, pumpCoefficient));
 
         long baseDrawnEuPerTick = ReactorPowerConsumption.drawEnergy(energyContainer, baseDesiredEuPerTick);
         long pumpDrawnEuPerTick = ReactorPowerConsumption.drawEnergy(energyContainer, pumpDesiredEuPerTick);
@@ -1468,6 +1908,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
      */
     private void updatePrimaryCirculation() {
         primaryCirculationFlowMb = 0;
+        // Stage 1-4a: no reactor coolant pump, no loop flow (natural circulation is not modeled yet).
+        if (!rcpRunning) return;
         int budgetMb = (int) Math.round(ConfigHolder.reactor.primaryCirculationRateKgPerSecond * TICK_SECONDS *
                 1000.0);
         if (budgetMb <= 0) return;
@@ -1483,7 +1925,14 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
                     if (filledMb >= pumpedMb) break;
                     filledMb += tank.fill(new FluidStack(outgoingFluid, pumpedMb - filledMb), true);
                 }
-                if (filledMb > 0) coolantMassKg -= filledMb / 1000.0;
+                if (filledMb > 0) {
+                    double exportedMassKg = filledMb / 1000.0;
+                    energyLedger.add(ReactorEnergyCategory.EXPORT,
+                            liquidEnthalpyJoules(exportedMassKg, temperatureKelvin));
+                    energyLedger.add(ReactorEnergyCategory.BAND_ROUNDING, liquidEnthalpyJoules(exportedMassKg,
+                            temperatureKelvin) - liquidEnthalpyJoules(exportedMassKg, outgoingFluid.getTemperature()));
+                    coolantMassKg -= exportedMassKg;
+                }
                 primaryCirculationFlowMb = filledMb;
             }
         }
@@ -1497,6 +1946,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
             if (drained == null || drained.amount <= 0) continue;
             double drainedTemperatureKelvin = drained.getFluid().getTemperature();
             double drainedMassKg = drained.amount / 1000.0;
+            energyLedger.add(ReactorEnergyCategory.IMPORT,
+                    liquidEnthalpyJoules(drainedMassKg, drainedTemperatureKelvin));
             temperatureKelvin = CoolantThermalSolver.mixTemperatures(coolantMassKg, temperatureKelvin,
                     drainedMassKg, drainedTemperatureKelvin);
             coolantMassKg += drainedMassKg;
@@ -1515,7 +1966,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
      * instead decays back toward 0 (condensing), never instantly.
      */
     private void applyCoolantSubcoolingClamp() {
-        double saturationTemperatureKelvin = WaterSaturationCurve.saturationTemperature(pressureMPa * 1.0e6);
+        double saturationTemperatureKelvin = WaterSaturationCurve.saturationTemperature(
+                Math.max(pressureMPa, ATMOSPHERIC_PRESSURE_MPA) * 1.0e6);
         if (temperatureKelvin >= saturationTemperatureKelvin && coolantMassKg > 0) {
             double excessJoules = (temperatureKelvin - saturationTemperatureKelvin) * coolantMassKg *
                     CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY;
@@ -1548,10 +2000,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     private double sumControlRodReactivity() {
         List<Double> values = new ArrayList<>();
         List<Double> weights = new ArrayList<>();
-        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
-            BlockPos pos = controlRod.getPos();
-            NodePosition topPosition = new NodePosition(pos.getX() - getPos().getX(), pos.getY() - getPos().getY(),
-                    pos.getZ() - getPos().getZ());
+        for (MetaTileEntityFuelAssemblyPort controlRod : cachedControlRods) {
+            NodePosition topPosition = fuelPortTopPosition(controlRod);
             double thermalFlux = cmfdResult.thermalFlux().getOrDefault(topPosition, 0.0);
             values.add(ControlRodWorth.reactivity(controlRod.getInsertionDepth(), controlRod.getMaxWorthReactivity()));
             weights.add(thermalFlux * thermalFlux);
@@ -1578,7 +2028,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     @Override
     public double getBankTotalWorthReactivity(int bankId) {
         double sum = 0.0;
-        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
+        for (MetaTileEntityFuelAssemblyPort controlRod : cachedControlRods) {
             if (controlRod.getBankId() == bankId) sum += controlRod.getMaxWorthReactivity();
         }
         return sum;
@@ -1617,15 +2067,9 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
 
     /** See {@link #requestStartup()}'s own JavaDoc. */
     private boolean isStartupReady() {
-        if (coolantMassKg < computeRatedCoolantMassKg() * ConfigHolder.reactor.startupCoolantReadyFraction) {
-            return false;
-        }
-        if (pressureMPa < ConfigHolder.reactor.targetOperatingPressureMPa *
-                ConfigHolder.reactor.startupPressureReadyFraction) {
-            return false;
-        }
-        return temperatureKelvin >= ConfigHolder.reactor.heatupTargetTemperatureKelvin *
-                ConfigHolder.reactor.startupHeatupReadyFraction;
+        // Stage 1-3: the core-operability checks (housing, lengths, fuel, >= 4 rod clusters) joined the plant
+        // preparation checks here -- see ReactorStartupRequirements.
+        return getStartupBlocker() == null;
     }
 
     /** Console write-direction command: request a planned shutdown. No-op unless currently {@code OPERATING}. */
@@ -1635,7 +2079,12 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
 
     /** Console write-direction command: the only way out of {@code TRIPPED}. No-op unless currently tripped. */
     public void requestManualReset() {
+        ReactorOperatingState before = operatingState;
         applyOperatingStateChange(ReactorOperatingEvaluator.manualReset(operatingState));
+        if (operatingState != before && structureBreachRecorded) {
+            structureBreachRecorded = false;
+            markDirty();
+        }
     }
 
     /** Console write-direction command: manual SCRAM button. See {@link #checkScramConditions()} for the rest. */
@@ -1653,12 +2102,18 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
      * simply starts at 0 kg, trivially satisfying it).
      */
     public void requestBeginCoolantInjection() {
-        if (!coolantInjectionActive && coolantMassKg <= computeRatedCoolantMassKg() *
+        // 2026-11-24: a toggle -- pressing again while injecting stops it (previously it could only stop on its
+        // own at the rated mass). Starting keeps the original trigger-fraction condition.
+        if (coolantInjectionActive) {
+            coolantInjectionActive = false;
+        } else if (coolantMassKg <= computeRatedCoolantMassKg() *
                 ConfigHolder.reactor.coolantInjectionTriggerFraction) {
-            coolantInjectionActive = true;
-            writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
-            markDirty();
-        }
+                    coolantInjectionActive = true;
+                } else {
+                    return;
+                }
+        writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+        markDirty();
     }
 
     /**
@@ -1700,7 +2155,10 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
             for (IFluidTank tank : getAbilities(ability)) {
                 if (drainedMb >= budgetMb) break;
                 FluidStack drained = tank.drain(budgetMb - drainedMb, true);
-                if (drained != null) drainedMb += drained.amount;
+                if (drained != null) {
+                    drainedMb += drained.amount;
+                    recordMakeupInflow(drained);
+                }
             }
         }
         if (drainedMb > 0) {
@@ -1710,28 +2168,53 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     }
 
     /**
+     * {@link ReactorEnergyCategory#MAKEUP_IN} for one drained batch of injection/boron-adjustment input, at the
+     * fluid's own registered temperature -- the current model mixes these batches in without any temperature
+     * effect, so the resulting residual is exactly the energy that simplification creates or destroys (see this
+     * mod's design memory, X6).
+     */
+    private void recordMakeupInflow(@NotNull FluidStack drained) {
+        energyLedger.add(ReactorEnergyCategory.MAKEUP_IN,
+                liquidEnthalpyJoules(drained.amount / 1000.0, drained.getFluid().getTemperature()));
+    }
+
+    /**
      * Console write-direction command: begin (or resume) raising {@link #pressureMPa} toward
      * {@code ConfigHolder.reactor.targetOperatingPressureMPa}. Stage 3 of this mod's startup/shutdown sequence
      * work (2026-09-21), deliberately provisional -- see that config field's own comment for why. A no-op if
      * already at or above the target (matches {@link #requestBeginCoolantInjection()}'s own idle-no-op style).
      */
     public void requestBeginPressurization() {
-        if (pressureMPa < ConfigHolder.reactor.targetOperatingPressureMPa) {
+        // 2026-11-24: a toggle -- pressing again while pressurizing holds the current pressure (previously the
+        // only stop was reaching the target). Interim until stage 5's heater/spray + pressure controller.
+        if (pressurizationActive) {
+            pressurizationActive = false;
+        } else if (pressureMPa < ConfigHolder.reactor.targetOperatingPressureMPa) {
             pressurizationActive = true;
             depressurizationActive = false;
-            writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
-            markDirty();
+        } else {
+            return;
         }
+        writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+        markDirty();
     }
 
-    /** As {@link #requestBeginPressurization()}, ramping {@link #pressureMPa} down toward 0 instead. */
+    /**
+     * As {@link #requestBeginPressurization()}, ramping {@link #pressureMPa} down toward atmospheric pressure
+     * instead (stage 1-2, 2026-11-21: previously toward 0, i.e. vacuum).
+     */
     public void requestBeginDepressurization() {
-        if (pressureMPa > 0) {
+        // 2026-11-24: a toggle, as requestBeginPressurization().
+        if (depressurizationActive) {
+            depressurizationActive = false;
+        } else if (pressureMPa > ATMOSPHERIC_PRESSURE_MPA) {
             depressurizationActive = true;
             pressurizationActive = false;
-            writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
-            markDirty();
+        } else {
+            return;
         }
+        writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+        markDirty();
     }
 
     /**
@@ -1752,8 +2235,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
             }
             markDirty();
         } else if (depressurizationActive) {
-            pressureMPa = Math.max(pressureMPa - rateThisTick, 0.0);
-            if (pressureMPa <= 0) {
+            pressureMPa = Math.max(pressureMPa - rateThisTick, ATMOSPHERIC_PRESSURE_MPA);
+            if (pressureMPa <= ATMOSPHERIC_PRESSURE_MPA) {
                 depressurizationActive = false;
                 writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
             }
@@ -1824,9 +2307,13 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         for (IFluidTank tank : getAbilities(importAbility)) {
             if (drainedMb >= budgetMb) break;
             FluidStack drained = tank.drain(budgetMb - drainedMb, true);
-            if (drained != null) drainedMb += drained.amount;
+            if (drained != null) {
+                drainedMb += drained.amount;
+                recordMakeupInflow(drained);
+            }
         }
         if (drainedMb <= 0) return;
+        energyLedger.add(ReactorEnergyCategory.MAKEUP_OUT, liquidEnthalpyJoules(drainedMb / 1000.0, temperatureKelvin));
 
         int remainingToExport = drainedMb;
         for (IFluidTank tank : getAbilities(GTNLMultiblockAbility.RADIOACTIVE_WASTEWATER_EXPORT)) {
@@ -1867,10 +2354,23 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         if (action == null) return;
         if (telemetryLogger == null) telemetryLogger = ReactorTelemetryLogger.open(getPos());
         telemetryLogger.logRow(autoControlSequencer.getElapsedSeconds(), this, action);
+        energyLedger.reset();
+    }
+
+    /** Read by {@link ReactorTelemetryLogger} -- see {@link #energyLedger}'s own JavaDoc. */
+    @NotNull
+    public EnergyLedger<ReactorEnergyCategory> getEnergyLedger() {
+        return energyLedger;
     }
 
     private void applyOperatingStateChange(@NotNull ReactorOperatingState next) {
         if (next != operatingState) {
+            // Stage 1-1 (2026-11-21): a trip isolates boron dilution -- a real PWR's protection system cuts off
+            // dilution sources on a reactor trip, and a still-running dilution would otherwise keep adding
+            // positive reactivity to a reactor that has just been shut down for a reason.
+            if (next.stage == ReactorOperatingStage.TRIPPED && operatingState.stage != ReactorOperatingStage.TRIPPED) {
+                boronDilutionActive = false;
+            }
             operatingState = next;
             writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
             markDirty();
@@ -1892,7 +2392,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         if (pointKineticsState.relativeNeutronPopulation >= ConfigHolder.reactor.shutdownCompletePowerThreshold) {
             return false;
         }
-        for (MetaTileEntityControlRodController controlRod : cachedControlRods) {
+        for (MetaTileEntityFuelAssemblyPort controlRod : cachedControlRods) {
             if (controlRod.getInsertionDepth() < FULLY_INSERTED_THRESHOLD) {
                 return false;
             }
@@ -2021,7 +2521,23 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         buf.writeBoolean(boronDilutionActive);
         buf.writeBoolean(boronConcentrationActive);
         buf.writeBoolean(autoControlSequencer.isActive());
-        buf.writeBoolean(fuelControlRodHousingMismatch);
+        buf.writeBoolean(housingMismatch);
+        buf.writeBoolean(lengthMismatch);
+        buf.writeBoolean(structureBreachRecorded);
+        buf.writeBoolean(startupBlocker != null);
+        if (startupBlocker != null) buf.writeEnumValue(startupBlocker);
+        buf.writeVarInt(loadedFuelAssemblyCountSynced);
+        buf.writeVarInt(loadedControlRodClusterCountSynced);
+        buf.writeBoolean(rcpRunning);
+        buf.writeBoolean(rhrInService);
+        buf.writeEnumValue(rhrNotice);
+        buf.writeDouble(rhrHeatRemovalWatts);
+        buf.writeDouble(rhrCoolingInletKelvin);
+        buf.writeDouble(rhrCoolingOutletKelvin);
+        buf.writeDouble(rhrCoolingFlowKgPerSecond);
+        buf.writeBoolean(rhrOutletCapped);
+        buf.writeBoolean(rhrNoPower);
+        buf.writeBoolean(rhrNoCoolingWater);
         buf.writeDouble(pointKineticsState.relativeNeutronPopulation);
         buf.writeDouble(totalReactivity);
         buf.writeDouble(shapeReactivityPcm);
@@ -2035,8 +2551,9 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         for (CoreMapCell cell : coreMapCells) {
             buf.writeVarInt(cell.dx);
             buf.writeVarInt(cell.dz);
-            buf.writeBoolean(cell.isFuel);
-            buf.writeDouble(cell.degradationLevel);
+            buf.writeEnumValue(cell.kind);
+            buf.writeByte(cell.depletionPercent);
+            buf.writeByte(cell.rodLevel);
         }
         buf.writeVarInt(controlRodSummaries.size());
         for (ControlRodSummary summary : controlRodSummaries) {
@@ -2069,7 +2586,22 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         boronDilutionActive = buf.readBoolean();
         boronConcentrationActive = buf.readBoolean();
         autoControlSequencer.setActive(buf.readBoolean());
-        fuelControlRodHousingMismatch = buf.readBoolean();
+        housingMismatch = buf.readBoolean();
+        lengthMismatch = buf.readBoolean();
+        structureBreachRecorded = buf.readBoolean();
+        startupBlocker = buf.readBoolean() ? buf.readEnumValue(ReactorStartupRequirements.Blocker.class) : null;
+        loadedFuelAssemblyCountSynced = buf.readVarInt();
+        loadedControlRodClusterCountSynced = buf.readVarInt();
+        rcpRunning = buf.readBoolean();
+        rhrInService = buf.readBoolean();
+        rhrNotice = buf.readEnumValue(RhrNotice.class);
+        rhrHeatRemovalWatts = buf.readDouble();
+        rhrCoolingInletKelvin = buf.readDouble();
+        rhrCoolingOutletKelvin = buf.readDouble();
+        rhrCoolingFlowKgPerSecond = buf.readDouble();
+        rhrOutletCapped = buf.readBoolean();
+        rhrNoPower = buf.readBoolean();
+        rhrNoCoolingWater = buf.readBoolean();
         // Display-only on the client: just enough of each state to back this class's own getters, not a full
         // reconstruction (the client never runs updatePhysicsAmplitude() itself, so precursor/iodine detail is
         // never needed here).
@@ -2085,7 +2617,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         int cellCount = buf.readVarInt();
         List<CoreMapCell> cells = new ArrayList<>(cellCount);
         for (int i = 0; i < cellCount; i++) {
-            cells.add(new CoreMapCell(buf.readVarInt(), buf.readVarInt(), buf.readBoolean(), buf.readDouble()));
+            cells.add(new CoreMapCell(buf.readVarInt(), buf.readVarInt(), buf.readEnumValue(CellKind.class),
+                    buf.readByte(), buf.readByte()));
         }
         coreMapCells = cells;
         int summaryCount = buf.readVarInt();
@@ -2148,6 +2681,10 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         data.setDouble("TotalReactivity", totalReactivity);
         data.setDouble("IodineConcentration", xenonIodineState.iodineConcentration());
         data.setDouble("XenonConcentration", xenonIodineState.xenonConcentration());
+        data.setBoolean("StructureBreachRecorded", structureBreachRecorded);
+        data.setBoolean("RcpRunning", rcpRunning);
+        data.setBoolean("RhrInService", rhrInService);
+        data.setString("RhrNotice", rhrNotice.name());
         return data;
     }
 
@@ -2161,7 +2698,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         operatingState = new ReactorOperatingState(stage, reason);
         coolantMassKg = data.getDouble("CoolantMassKg");
         coolantInjectionActive = data.getBoolean("CoolantInjectionActive");
-        pressureMPa = data.getDouble("PressureMPa");
+        // Stage 1-2 (2026-11-21): worlds saved before the atmospheric floor existed may hold 0 (vacuum).
+        pressureMPa = Math.max(data.getDouble("PressureMPa"), ATMOSPHERIC_PRESSURE_MPA);
         pressurizationActive = data.getBoolean("PressurizationActive");
         depressurizationActive = data.getBoolean("DepressurizationActive");
         temperatureKelvin = data.hasKey("TemperatureKelvin") ? data.getDouble("TemperatureKelvin") : 300.0;
@@ -2185,6 +2723,10 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         totalReactivity = data.getDouble("TotalReactivity");
         xenonIodineState = new XenonIodineState(data.getDouble("IodineConcentration"),
                 data.getDouble("XenonConcentration"));
+        structureBreachRecorded = data.getBoolean("StructureBreachRecorded");
+        rcpRunning = !data.hasKey("RcpRunning") || data.getBoolean("RcpRunning");
+        rhrInService = data.getBoolean("RhrInService");
+        rhrNotice = data.hasKey("RhrNotice") ? RhrNotice.valueOf(data.getString("RhrNotice")) : RhrNotice.NONE;
     }
 
     public MetaTileEntityPressurizedWaterReactor(ResourceLocation metaTileEntityId) {
@@ -2227,6 +2769,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     @Override
     protected void updateFormedValid() {
         updateChannelCaches();
+        double storedEnergyBeforeJoules = computeStoredEnergyJoules();
         updatePhysicsShape();
         updatePhysicsAmplitude();
         updateFuelBurnup();
@@ -2235,39 +2778,124 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         updateCoolantInjection();
         updatePressureAdjustment();
         updateBoronAdjustment();
+        energyLedger.add(ReactorEnergyCategory.STORED_CHANGE,
+                computeStoredEnergyJoules() - storedEnergyBeforeJoules);
+        energyLedger.endTick();
         updateCoreMapCells();
         updateControlRodSummaries();
+        updateSyncedCoreSummary();
         updateAutoControl();
         checkAutomaticStageTransitions();
         checkScramConditions();
+        applyScramRodDrop();
         updateSevereAccidentState();
         syncPhysicsDisplayPeriodically();
+    }
+
+    /**
+     * Fuel + primary coolant internal energy (J) relative to this mod's {@code AMBIENT_TEMPERATURE_KELVIN}
+     * reference -- sensible heat of both nodes plus fuel melting latent heat and coolant void latent heat, the
+     * same quantities {@link #updateFuelAndCoolantThermal()}/{@link #applyCoolantSubcoolingClamp()} trade
+     * temperature for. Read only by {@link #energyLedger}'s per-tick {@link ReactorEnergyCategory#STORED_CHANGE}
+     * (stage 0-3 of this mod's reactor physics rework, see this mod's design memory).
+     */
+    private double computeStoredEnergyJoules() {
+        double fuelMassKg = computeTotalCoreFuelMassKg();
+        double fuelJoules = fuelMassKg * FuelThermalConstants.SPECIFIC_HEAT_CAPACITY_J_PER_KG_KELVIN *
+                (fuelTemperatureKelvin - AMBIENT_TEMPERATURE_KELVIN) +
+                meltedFuelMassKg * FuelThermalConstants.LATENT_HEAT_OF_FUSION_J_PER_KG;
+        double coolantJoules = liquidEnthalpyJoules(coolantMassKg, temperatureKelvin) +
+                primaryVoidFraction * coolantMassKg * SteamProperties.LATENT_HEAT_OF_VAPORIZATION_J_PER_KG;
+        return fuelJoules + coolantJoules;
+    }
+
+    /** {@code m * c_p * (T - 300 K)} -- see {@link ReactorEnergyCategory}'s own JavaDoc for the convention. */
+    private static double liquidEnthalpyJoules(double massKg, double temperatureKelvin) {
+        return massKg * CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY *
+                (temperatureKelvin - AMBIENT_TEMPERATURE_KELVIN);
+    }
+
+    /**
+     * Drives every control rod toward full insertion at {@code ConfigHolder.reactor.scramRodDropTimeSeconds}
+     * while {@link ReactorOperatingStage#TRIPPED} -- a real PWR's rod cluster control assemblies drop by gravity
+     * once the drive mechanism releases them on a trip signal (stage 1-1 of this mod's reactor physics rework,
+     * 2026-11-21, see this mod's design memory: before this, a trip only changed the stage label and left every
+     * rod wherever it was). Deliberately stateless -- "tripped means rods are falling toward 1.0" -- so a world
+     * reload mid-drop simply resumes from each rod's own persisted insertion depth.
+     */
+    private void applyScramRodDrop() {
+        if (operatingState.stage != ReactorOperatingStage.TRIPPED) return;
+        boolean moved = false;
+        // Every port, not just intact clusters: a port's drive state is meaningful even while its insert is a
+        // broken rod or absent, and should read "inserted" once the trip clears.
+        for (MetaTileEntityFuelAssemblyPort controlRod : cachedAssemblyPorts) {
+            double current = controlRod.getInsertionDepth();
+            if (current >= 1.0) continue;
+            controlRod.setInsertionDepth(ScramRodDrop.advance(current, TICK_SECONDS,
+                    ConfigHolder.reactor.scramRodDropTimeSeconds));
+            moved = true;
+        }
+        if (moved) markDirty();
     }
 
     @Override
     protected void formStructure(PatternMatchContext context) {
         super.formStructure(context);
-        fuelControlRodHousingMismatch = !checkFuelControlRodHousingColumns();
+        housingMismatch = !checkHousingColumns();
+        updateChannelCaches();
+        lengthMismatch = computeLengthMismatch();
+        requestShapeRecompute();
     }
 
     /**
-     * Scans straight down from each placed fuel/control-rod port's own position through the channel (down to,
-     * but not including, the solid bottom cap at layer 1) checking that every block in that column is the
-     * matching housing type.
+     * A structure that stops matching while the reactor is running (stage 1-3, 2026-11-21) trips it with
+     * {@link ScramReason#STRUCTURE_BREACH}. Once unformed, {@link #updateFormedValid()} no longer runs, so the
+     * rods cannot be dropped over time -- every port's rods are forced to full insertion immediately instead.
+     * Skipped when part of the vessel is in an unloaded chunk, so a chunk-border unload is not mistaken for a
+     * breach.
      */
-    private boolean checkFuelControlRodHousingColumns() {
+    @Override
+    public void invalidateStructure() {
+        if (getWorld() != null && !getWorld().isRemote && isStructureFormed() && isRunningStage() &&
+                isVesselAreaLoaded()) {
+            for (IMultiblockPart part : getMultiblockParts()) {
+                if (part instanceof MetaTileEntityFuelAssemblyPort port) port.setInsertionDepth(1.0);
+            }
+            structureBreachRecorded = true;
+            applyOperatingStateChange(ReactorOperatingEvaluator.scram(operatingState, ScramReason.STRUCTURE_BREACH));
+        }
+        super.invalidateStructure();
+        cachedAssemblyPorts = new ArrayList<>();
+        cachedFuelPorts = new ArrayList<>();
+        cachedControlRods = new ArrayList<>();
+    }
+
+    private boolean isRunningStage() {
+        return operatingState.stage == ReactorOperatingStage.STARTUP ||
+                operatingState.stage == ReactorOperatingStage.OPERATING ||
+                operatingState.stage == ReactorOperatingStage.SHUTTING_DOWN;
+    }
+
+    /** Whether every block of the vessel's bounding box is in a loaded chunk. */
+    private boolean isVesselAreaLoaded() {
+        int radius = diameter / 2;
+        BlockPos center = getPos().offset(getFrontFacing().getOpposite(), radius);
+        BlockPos from = center.add(-radius, -LAYERS_BELOW_CONTROLLER, -radius);
+        BlockPos to = center.add(radius, channelTopYRelative(), radius);
+        return getWorld().isAreaLoaded(from, to);
+    }
+
+    /**
+     * Scans straight down from each fuel assembly port through its channel (down to, but not including, the solid
+     * bottom cap) checking that every block in that column is {@code fuel_rod_housing}.
+     */
+    private boolean checkHousingColumns() {
         if (getWorld() == null) return true;
-        int channelBottomY = getPos().getY() - LAYERS_BELOW_CONTROLLER + 1;
+        int channelBottomY = getPos().getY() + CHANNEL_BOTTOM_Y_RELATIVE;
         for (IMultiblockPart part : getMultiblockParts()) {
-            if (part instanceof MetaTileEntityFuelPort fuelPort) {
-                if (!isHousingColumnUniform(fuelPort.getPos(), channelBottomY, GTNLMetaBlocks.FUEL_ROD_HOUSING)) {
-                    return false;
-                }
-            } else if (part instanceof MetaTileEntityControlRodController controlRodController) {
-                if (!isHousingColumnUniform(controlRodController.getPos(), channelBottomY,
-                        GTNLMetaBlocks.CONTROL_ROD_HOUSING)) {
-                    return false;
-                }
+            if (part instanceof MetaTileEntityFuelAssemblyPort port &&
+                    !isHousingColumnUniform(port.getPos(), channelBottomY, GTNLMetaBlocks.FUEL_ROD_HOUSING)) {
+                return false;
             }
         }
         return true;
@@ -2289,9 +2917,13 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         super.configureErrorText(builder);
         builder.addCustom((keyList, syncer) -> {
             if (!isStructureFormed()) return;
-            if (syncer.syncBoolean(fuelControlRodHousingMismatch)) {
+            if (syncer.syncBoolean(housingMismatch)) {
                 keyList.add(KeyUtil.lang(TextFormatting.RED,
                         "gtnuclear.multiblock.pressurized_water_reactor.housing_mismatch"));
+            }
+            if (syncer.syncBoolean(lengthMismatch)) {
+                keyList.add(KeyUtil.lang(TextFormatting.RED,
+                        "gtnuclear.multiblock.pressurized_water_reactor.length_mismatch"));
             }
         });
     }
@@ -2384,10 +3016,10 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
                             !withinRasterizedCircle(row, column - 1, center, radius) ||
                             !withinRasterizedCircle(row, column + 1, center, radius);
                     ringRow.append(boundary ? 'B' : 'A');
-                    // Top cap: boundary stays casing wall, interior becomes a fuel-eligible ('F') or control-rod-
-                    // eligible ('C') channel slot, checkerboard-split so neither pool can ever be starved (see
-                    // this class's own JavaDoc on why the two are never the same slot).
-                    topRow.append(boundary ? 'B' : ((row + column) % 2 == 0 ? 'F' : 'C'));
+                    // Top cap: boundary stays casing wall, every interior cell is a fuel assembly channel slot
+                    // ('F': a fuel assembly port or plain casing -- stage 1-3, control rod clusters now live in
+                    // the fuel assemblies' guide tubes instead of separate channels).
+                    topRow.append(boundary ? 'B' : 'F');
                     if (!boundary) interiorCount++;
                 }
             }
@@ -2419,6 +3051,9 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         String[] controllerRingLayer = ringLayer.clone();
         controllerRingLayer[0] = withCharAt(
                 withCharAt(withCharAt(controllerRingLayer[0], center, 'S'), center + 1, 'L'), center - 1, 'N');
+        // Left/right face centers of the same layer: residual heat removal cooling water inlet ('W') and outlet
+        // ('Y') -- stage 1-4a, the non-radioactive cooling side of the built-in RHR heat exchanger.
+        controllerRingLayer[center] = withCharAt(withCharAt(controllerRingLayer[center], 0, 'W'), diameter - 1, 'Y');
 
         // Back face center (pure/distilled water injection, for boron dilution).
         String[] pureWaterRingLayer = ringLayer.clone();
@@ -2455,10 +3090,10 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
                 .where('O', abilities(GTNLMultiblockAbility.REACTOR_COOLANT_EXPORT).setMinGlobalLimited(1))
                 .where('X', abilities(GTNLMultiblockAbility.BORIC_ACID_IMPORT).setMinGlobalLimited(1))
                 .where('P', abilities(GTNLMultiblockAbility.PURE_WATER_IMPORT).setMinGlobalLimited(1))
-                .where('F', abilities(GTNLMultiblockAbility.FUEL_PORT).setMinGlobalLimited(2)
-                        .or(states(GTNLMetaBlocks.REACTOR_VESSEL_CASING
-                                .getState(ReactorVesselCasing.CasingType.PWR_REACTOR_VESSEL))))
-                .where('C', abilities(GTNLMultiblockAbility.CONTROL_ROD_PORT).setMinGlobalLimited(4)
+                .where('W', abilities(GTNLMultiblockAbility.RHR_COOLING_WATER_IMPORT).setMinGlobalLimited(1))
+                .where('Y', abilities(GTNLMultiblockAbility.RHR_COOLING_WATER_EXPORT).setMinGlobalLimited(1))
+                .where('F', abilities(GTNLMultiblockAbility.FUEL_ASSEMBLY_PORT)
+                        .setMinGlobalLimited(ReactorStartupRequirements.MIN_CONTROL_ROD_CLUSTERS)
                         .or(states(GTNLMetaBlocks.REACTOR_VESSEL_CASING
                                 .getState(ReactorVesselCasing.CasingType.PWR_REACTOR_VESSEL))))
                 .where('A', any())

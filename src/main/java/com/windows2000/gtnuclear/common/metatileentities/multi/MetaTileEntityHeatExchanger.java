@@ -30,12 +30,14 @@ import com.cleanroommc.modularui.value.sync.IntSyncValue;
 import com.cleanroommc.modularui.value.sync.PanelSyncManager;
 import com.windows2000.gtnuclear.api.metatileentity.multiblock.GTNLMultiblockAbility;
 import com.windows2000.gtnuclear.api.nuclear.thermal.CoolantThermalSolver;
+import com.windows2000.gtnuclear.api.nuclear.thermal.EnergyLedger;
 import com.windows2000.gtnuclear.api.nuclear.thermal.SteamProperties;
 import com.windows2000.gtnuclear.api.nuclear.thermal.WaterSaturationCurve;
 import com.windows2000.gtnuclear.api.unification.materials.GTNLMaterials;
 import com.windows2000.gtnuclear.common.ConfigHolder;
 import com.windows2000.gtnuclear.common.blocks.GTNLMetaBlocks;
 import com.windows2000.gtnuclear.common.blocks.reactor.ReactorVesselCasing;
+import com.windows2000.gtnuclear.common.util.HeatExchangerEnergyCategory;
 import com.windows2000.gtnuclear.common.util.HeatExchangerTelemetryLogger;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -75,6 +77,13 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
     @Nullable
     private HeatExchangerTelemetryLogger telemetryLogger;
     private int telemetryTicksUntilNextLog = 0;
+    /**
+     * Stage 0-3 of this mod's reactor physics rework (2026-11-21, see this mod's design memory): per-category
+     * energy bookkeeping over one telemetry interval, logged by {@link #telemetryLogger} and then reset -- see
+     * {@link EnergyLedger}'s own JavaDoc.
+     */
+    private final EnergyLedger<HeatExchangerEnergyCategory> energyLedger = new EnergyLedger<>(
+            HeatExchangerEnergyCategory.class);
     private double telemetryElapsedSeconds = 0.0;
     private static final int TELEMETRY_INTERVAL_TICKS = 20;
 
@@ -176,9 +185,13 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
      */
     @Override
     protected void updateFormedValid() {
+        double storedEnergyBeforeJoules = computeStoredEnergyJoules();
         receivePrimaryCoolant();
         double qRemovedWatts = coolPrimaryAndPumpBack();
         updateSecondarySide(qRemovedWatts);
+        energyLedger.add(HeatExchangerEnergyCategory.STORED_CHANGE,
+                computeStoredEnergyJoules() - storedEnergyBeforeJoules);
+        energyLedger.endTick();
         syncThermalStatePeriodically();
         logTelemetryPeriodically(qRemovedWatts);
         lastQRemovedWatts = qRemovedWatts;
@@ -300,6 +313,7 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
         telemetryTicksUntilNextLog = TELEMETRY_INTERVAL_TICKS;
         telemetryElapsedSeconds += TELEMETRY_INTERVAL_TICKS * TICK_SECONDS;
         telemetryLogger.logRow(telemetryElapsedSeconds, this, qRemovedWatts);
+        energyLedger.reset();
     }
 
     /** Closes {@link #telemetryLogger} if the block is broken while it's open. */
@@ -336,6 +350,8 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
             if (drained == null || drained.amount <= 0) continue;
             double drainedTemperatureKelvin = drained.getFluid().getTemperature();
             double drainedMassKg = drained.amount / 1000.0;
+            energyLedger.add(HeatExchangerEnergyCategory.PRIMARY_IMPORT,
+                    liquidEnthalpyJoules(drainedMassKg, drainedTemperatureKelvin));
             primarySideTemperatureKelvin = CoolantThermalSolver.mixTemperatures(primarySideMassKg,
                     primarySideTemperatureKelvin, drainedMassKg, drainedTemperatureKelvin);
             primarySideMassKg += drainedMassKg;
@@ -387,6 +403,7 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
         }
         primarySideTemperatureKelvin = CoolantThermalSolver.advance(primarySideTemperatureKelvin, -qRemovedWatts,
                 primarySideMassKg, CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY, TICK_SECONDS);
+        energyLedger.add(HeatExchangerEnergyCategory.TRANSFER, qRemovedWatts * TICK_SECONDS);
 
         if (primarySideTemperatureKelvin > AMBIENT_TEMPERATURE_KELVIN) {
             int budgetMb = (int) Math.round(ConfigHolder.reactor.primaryCirculationRateKgPerSecond * TICK_SECONDS *
@@ -400,7 +417,13 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
                     filledMb += tank.fill(new FluidStack(outgoingFluid, pumpedMb - filledMb), true);
                 }
                 if (filledMb > 0) {
-                    primarySideMassKg -= filledMb / 1000.0;
+                    double exportedMassKg = filledMb / 1000.0;
+                    energyLedger.add(HeatExchangerEnergyCategory.PRIMARY_EXPORT,
+                            liquidEnthalpyJoules(exportedMassKg, primarySideTemperatureKelvin));
+                    energyLedger.add(HeatExchangerEnergyCategory.BAND_ROUNDING,
+                            liquidEnthalpyJoules(exportedMassKg, primarySideTemperatureKelvin) -
+                                    liquidEnthalpyJoules(exportedMassKg, outgoingFluid.getTemperature()));
+                    primarySideMassKg -= exportedMassKg;
                     markDirty();
                 }
             }
@@ -456,7 +479,10 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
         }
         lastSteamOutputMb = filledMb;
         if (filledMb > 0) {
-            secondaryWaterMassKg -= filledMb / 1000.0;
+            double steamMassKg = filledMb / 1000.0;
+            energyLedger.add(HeatExchangerEnergyCategory.STEAM, liquidEnthalpyJoules(steamMassKg,
+                    saturationTemperatureKelvin) + steamMassKg * SteamProperties.LATENT_HEAT_OF_VAPORIZATION_J_PER_KG);
+            secondaryWaterMassKg -= steamMassKg;
             markDirty();
         }
     }
@@ -498,10 +524,40 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
         if (drainedMb <= 0) return;
 
         double incomingMassKg = drainedMb / 1000.0;
+        energyLedger.add(HeatExchangerEnergyCategory.FEEDWATER,
+                liquidEnthalpyJoules(incomingMassKg, FEEDWATER_TEMPERATURE_KELVIN));
         secondaryWaterTemperatureKelvin = CoolantThermalSolver.mixTemperatures(secondaryWaterMassKg,
-                secondaryWaterTemperatureKelvin, incomingMassKg, 300.0);
-        secondaryWaterMassKg = Math.min(ratedMassKg, secondaryWaterMassKg + incomingMassKg);
+                secondaryWaterTemperatureKelvin, incomingMassKg, FEEDWATER_TEMPERATURE_KELVIN);
+        double mixedMassKg = secondaryWaterMassKg + incomingMassKg;
+        double blowdownKg = Math.max(0.0, mixedMassKg - ratedMassKg);
+        energyLedger.add(HeatExchangerEnergyCategory.BLOWDOWN,
+                liquidEnthalpyJoules(blowdownKg, secondaryWaterTemperatureKelvin));
+        secondaryWaterMassKg = Math.min(ratedMassKg, mixedMassKg);
         markDirty();
+    }
+
+    /** The temperature this class has always assumed for incoming feedwater (previously an inline literal). */
+    private static final double FEEDWATER_TEMPERATURE_KELVIN = 300.0;
+
+    /**
+     * Primary-side + secondary-side internal energy (J) relative to {@link #AMBIENT_TEMPERATURE_KELVIN} -- read
+     * only by {@link #energyLedger}'s per-tick {@link HeatExchangerEnergyCategory#STORED_CHANGE}.
+     */
+    private double computeStoredEnergyJoules() {
+        return liquidEnthalpyJoules(primarySideMassKg, primarySideTemperatureKelvin) +
+                liquidEnthalpyJoules(secondaryWaterMassKg, secondaryWaterTemperatureKelvin);
+    }
+
+    /** {@code m * c_p * (T - 300 K)} -- same convention as the reactor's own ledger. */
+    private static double liquidEnthalpyJoules(double massKg, double temperatureKelvin) {
+        return massKg * CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY *
+                (temperatureKelvin - AMBIENT_TEMPERATURE_KELVIN);
+    }
+
+    /** Read by {@link HeatExchangerTelemetryLogger} -- see {@link #energyLedger}'s own JavaDoc. */
+    @NotNull
+    public EnergyLedger<HeatExchangerEnergyCategory> getEnergyLedger() {
+        return energyLedger;
     }
 
     /** Same "periodic timer, not change-triggered" sync pattern as the reactor's own display fields. */

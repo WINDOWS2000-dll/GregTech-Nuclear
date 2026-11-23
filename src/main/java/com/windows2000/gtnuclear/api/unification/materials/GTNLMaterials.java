@@ -9,6 +9,7 @@ import net.minecraftforge.fluids.Fluid;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 
 import com.windows2000.gtnuclear.api.GTNuclearValues;
+import com.windows2000.gtnuclear.api.nuclear.thermal.CoolingWaterTemperatureBands;
 import com.windows2000.gtnuclear.api.nuclear.thermal.ReactorCoolantTemperatureBands;
 import com.windows2000.gtnuclear.api.unification.materials.reactor.ReactorFluidMaterials;
 import com.windows2000.gtnuclear.api.unification.materials.series.ActiniumSeriesMaterials;
@@ -169,6 +170,18 @@ public class GTNLMaterials {
         int index = ReactorCoolantTemperatureBands.nearestBandIndex(
                 ReactorCoolantTemperatureBands.BAND_TEMPERATURES_KELVIN, temperatureKelvin);
         return ReactorCoolantWaterBands[index].getFluid();
+    }
+
+    /**
+     * Non-radioactive cooling water temperature bands, IDs 144-158 (15 bands, 300-370 K, 5 K spacing; 159-199 are
+     * reserved for future cooling-system fluids) -- see {@link CoolingWaterTemperatureBands}. Indices correspond
+     * 1:1 with {@link CoolingWaterTemperatureBands#BAND_TEMPERATURES_KELVIN}.
+     */
+    public static Material[] CoolingWaterBands;
+
+    /** The registered cooling water band fluid nearest {@code temperatureKelvin}. */
+    public static Fluid nearestCoolingWaterBandFluid(double temperatureKelvin) {
+        return CoolingWaterBands[CoolingWaterTemperatureBands.nearestBandIndex(temperatureKelvin)].getFluid();
     }
 
     @SubscribeEvent

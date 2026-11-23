@@ -10,19 +10,23 @@ gtnuclear.fluid.type_radioactive_wastewater.tooltip=Radioactive Wastewater
 gtnuclear.fluid_pipe.radioactive_wastewater_proof=Can transport radioactive wastewater
 
 # Pressurized Water Reactor (see com.windows2000.gtnuclear.common.metatileentities.multi.MetaTileEntityPressurizedWaterReactor)
-gtnuclear.multiblock.pressurized_water_reactor.housing_mismatch=A fuel or control rod channel is not uniformly lined with its matching housing block
+gtnuclear.multiblock.pressurized_water_reactor.housing_mismatch=A fuel assembly channel is not uniformly lined with Fuel Assembly Housing
+gtnuclear.multiblock.pressurized_water_reactor.length_mismatch=A loaded fuel assembly or control rod cluster is longer than the channel height
+tile.fuel_rod_housing.pwr_fuel_rod_housing.name=Fuel Assembly Housing
 
 # Control Console commands (see com.windows2000.gtnuclear.common.metatileentities.multi.MetaTileEntityControlConsole)
 gtnuclear.gui.control_console.startup=Startup
 gtnuclear.gui.control_console.shutdown=Shutdown
 gtnuclear.gui.control_console.reset=Reset
 gtnuclear.gui.control_console.scram=SCRAM
-gtnuclear.gui.control_console.coolant_injection=Coolant Inject
-gtnuclear.gui.control_console.pressurize=Pressurize
-gtnuclear.gui.control_console.depressurize=Depressurize
+gtnuclear.gui.control_console.coolant_injection=Coolant Inject/Stop
+gtnuclear.gui.control_console.pressurize=Pressurize/Hold
+gtnuclear.gui.control_console.depressurize=Depress./Hold
 gtnuclear.gui.control_console.boron_dilution=Boron Dilute
 gtnuclear.gui.control_console.boron_concentration=Boron Conc.
 gtnuclear.gui.control_console.auto_control=Auto Control
+gtnuclear.gui.control_console.rcp=RCP Run/Stop
+gtnuclear.gui.control_console.rhr=RHR Start/Stop
 
 # MetaTileEntity names (see com.windows2000.gtnuclear.common.metatileentities.GTNLMetaTileEntityRegistration)
 gtnuclear.machine.isotope_storage.name=Isotope Storage
@@ -33,8 +37,9 @@ gtnuclear.machine.boric_acid_import_hatch.name=Boric Acid Import Hatch
 gtnuclear.machine.pure_water_import_hatch.name=Pure Water Import Hatch
 gtnuclear.machine.emergency_coolant_import_hatch.name=Emergency Coolant Import Hatch
 gtnuclear.machine.radioactive_wastewater_export_hatch.name=Radioactive Wastewater Export Hatch
-gtnuclear.machine.fuel_port_hatch.name=Fuel Port
-gtnuclear.machine.control_rod_controller_hatch.name=Control Rod Controller
+gtnuclear.machine.rhr_cooling_water_import_hatch.name=RHR Cooling Water Import Hatch
+gtnuclear.machine.rhr_cooling_water_export_hatch.name=RHR Cooling Water Export Hatch
+gtnuclear.machine.fuel_assembly_port.name=Fuel Assembly Port
 gtnuclear.machine.reactor_link_transmitter_hatch.name=Reactor Link Transmitter Hatch
 gtnuclear.machine.reactor_link_receiver_hatch.name=Reactor Link Receiver Hatch
 gtnuclear.machine.console_screen.name=Console Screen
@@ -54,13 +59,16 @@ gtnuclear.machine.high_pressure_steam_turbine.name=High Pressure Steam Turbine
 gtnuclear.machine.low_pressure_steam_turbine.name=Low Pressure Steam Turbine
 
 # Fuel/control rod items (see com.windows2000.gtnuclear.common.item.GTNLItems)
-item.gtnuclear.fuel_rod.natural_uranium.name=Natural Uranium Fuel Rod
-item.gtnuclear.fuel_rod.leu.name=LEU Fuel Rod
-item.gtnuclear.fuel_rod.haleu.name=HALEU Fuel Rod
-item.gtnuclear.fuel_rod.heu.name=HEU Fuel Rod
-item.gtnuclear.control_rod.standard.name=Control Rod
-item.gtnuclear.control_rod.high_value.name=High-Value Control Rod
-item.gtnuclear.broken_control_rod.name=Broken Control Rod
+item.gtnuclear.fuel_rod.natural_uranium.name=Fuel Assembly (Natural Uranium)
+item.gtnuclear.fuel_rod.leu.name=Fuel Assembly (LEU)
+item.gtnuclear.fuel_rod.haleu.name=Fuel Assembly (HALEU)
+item.gtnuclear.fuel_rod.heu.name=Fuel Assembly (HEU)
+item.gtnuclear.control_rod.standard.name=Control Rod Cluster (Ag-In-Cd)
+item.gtnuclear.control_rod.high_value.name=Control Rod Cluster (B4C)
+item.gtnuclear.broken_control_rod.name=Broken Control Rod Cluster
+gtnuclear.assembly.tooltip.no_length=No length set (invalid item -- cannot be loaded)
+gtnuclear.assembly.tooltip.length=Length: %s
+gtnuclear.fuel_rod.tooltip.uranium=Uranium: %s
 gtnuclear.fuel_rod.tooltip.remaining=Fissile Capability Remaining: %s%%
 gtnuclear.fuel_rod.tooltip.replacement_recommended=Replacement Recommended
 gtnuclear.multiblock.heat_exchanger.primary_coolant=Primary Coolant: %s K, %s kg
@@ -68,3 +76,40 @@ gtnuclear.multiblock.heat_exchanger.secondary_water=Secondary Water: %s K, %s kg
 gtnuclear.multiblock.heat_exchanger.heat_transfer=Heat Transfer: %s MW
 gtnuclear.multiblock.heat_exchanger.steam_output=Steam Output: %s mB/t
 item.gtnuclear.neutron_source_rod.californium_252.name=Californium-252 Neutron Source Rod
+
+# Fuel Assembly Port provisional UI (see com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityFuelAssemblyPort)
+gtnuclear.gui.fuel_assembly_port.unformed=Not formed
+gtnuclear.gui.fuel_assembly_port.unlocked=Unlocked
+gtnuclear.gui.fuel_assembly_port.locked=Locked (running)
+gtnuclear.gui.fuel_assembly_port.fuel=Fuel Assembly
+gtnuclear.gui.fuel_assembly_port.insert=Guide Tube Insert
+gtnuclear.gui.fuel_assembly_port.none=(empty)
+gtnuclear.gui.fuel_assembly_port.fuel.length=Length: %s
+gtnuclear.gui.fuel_assembly_port.fuel.remaining=Fissile left: %s
+gtnuclear.gui.fuel_assembly_port.fuel.u235=U-235: %s
+gtnuclear.gui.fuel_assembly_port.fuel.u238=U-238: %s
+gtnuclear.gui.fuel_assembly_port.fuel.pu239=Pu-239: %s
+gtnuclear.gui.fuel_assembly_port.fuel.local_power=Local power: %s
+gtnuclear.gui.fuel_assembly_port.fuel.xenon=Xenon: %s
+gtnuclear.gui.fuel_assembly_port.fuel.temperature=Fuel temp: %s
+gtnuclear.gui.fuel_assembly_port.insert.length=Length: %s
+gtnuclear.gui.fuel_assembly_port.insert.bank=Bank: %s
+gtnuclear.gui.fuel_assembly_port.insert.insertion=Inserted: %s
+gtnuclear.gui.fuel_assembly_port.insert.wear=Wear: %s
+
+# Cooling water temperature bands (see com.windows2000.gtnuclear.api.nuclear.thermal.CoolingWaterTemperatureBands)
+gtnuclear.material.cooling_water_300_kelvin=Cooling Water (300 K)
+gtnuclear.material.cooling_water_305_kelvin=Cooling Water (305 K)
+gtnuclear.material.cooling_water_310_kelvin=Cooling Water (310 K)
+gtnuclear.material.cooling_water_315_kelvin=Cooling Water (315 K)
+gtnuclear.material.cooling_water_320_kelvin=Cooling Water (320 K)
+gtnuclear.material.cooling_water_325_kelvin=Cooling Water (325 K)
+gtnuclear.material.cooling_water_330_kelvin=Cooling Water (330 K)
+gtnuclear.material.cooling_water_335_kelvin=Cooling Water (335 K)
+gtnuclear.material.cooling_water_340_kelvin=Cooling Water (340 K)
+gtnuclear.material.cooling_water_345_kelvin=Cooling Water (345 K)
+gtnuclear.material.cooling_water_350_kelvin=Cooling Water (350 K)
+gtnuclear.material.cooling_water_355_kelvin=Cooling Water (355 K)
+gtnuclear.material.cooling_water_360_kelvin=Cooling Water (360 K)
+gtnuclear.material.cooling_water_365_kelvin=Cooling Water (365 K)
+gtnuclear.material.cooling_water_370_kelvin=Cooling Water (370 K)

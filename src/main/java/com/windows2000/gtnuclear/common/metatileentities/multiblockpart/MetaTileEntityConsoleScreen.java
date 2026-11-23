@@ -69,6 +69,10 @@ public class MetaTileEntityConsoleScreen extends MetaTileEntityMultiblockPart
     private static final int COLOR_CONTROL_ROD_INSERTED = 0xFFFF4040;
     /** Same brightness as {@link #COLOR_TEXT} (2026-09-21 feedback: the original dim gray was too subtle). */
     private static final int COLOR_GRID = COLOR_TEXT;
+    /** Core map: an interior cell with plain casing (no port). */
+    private static final int COLOR_CASING_CELL = 0xFF303030;
+    /** Core map: a fuel assembly port without fuel. */
+    private static final int COLOR_EMPTY_PORT = 0xFF909090;
 
     /**
      * Shrinks glyph size (and, proportionally, line spacing) relative to the panel-size-driven {@code scale} used
@@ -248,7 +252,10 @@ public class MetaTileEntityConsoleScreen extends MetaTileEntityMultiblockPart
 
         float b = bTop + 2 * padding;
         for (String line : lines) {
-            int color = line.contains("MISMATCH") || line.startsWith("SCRAM") ? COLOR_WARNING : COLOR_TEXT;
+            int color = line.contains("MISMATCH") || line.startsWith("SCRAM") || line.startsWith("BREACH") ||
+                    line.contains("WARNING") || line.contains("ISOLATED") || line.contains("REFUSED") ||
+                    line.contains("NO POWER") || line.contains("NO COOLING") ?
+                            COLOR_WARNING : COLOR_TEXT;
             renderTextOnPanel(aLeft + padding, b, color, line, textScale);
             b += 0.06f * textScale;
         }
@@ -264,8 +271,15 @@ public class MetaTileEntityConsoleScreen extends MetaTileEntityMultiblockPart
         ReactorOperatingState operatingState = reactor.getOperatingState();
         List<String> lines = new ArrayList<>();
         lines.add("STRUCTURE: " + (reactor.isStructureFormed() ? "FORMED" : "NOT FORMED"));
-        lines.add("HOUSING: " + (reactor.isFuelControlRodHousingMismatch() ? "MISMATCH" : "OK"));
+        lines.add("HOUSING: " + (reactor.isHousingMismatch() ? "MISMATCH" : "OK"));
+        if (reactor.isLengthMismatch()) lines.add("LENGTH: MISMATCH");
+        if (reactor.isStructureBreachRecorded()) lines.add("BREACH: STRUCTURE BROKEN WHILE RUNNING");
+        lines.add("ASSEMBLIES: " + reactor.getLoadedFuelAssemblyCount() + " fuel / " +
+                reactor.getLoadedControlRodClusterCount() + " rods");
         lines.add("STAGE: " + operatingState.stage);
+        if (operatingState.stage == ReactorOperatingStage.SHUTDOWN && reactor.getSyncedStartupBlocker() != null) {
+            lines.add("STARTUP BLOCKED: " + reactor.getSyncedStartupBlocker());
+        }
         if (operatingState.stage == ReactorOperatingStage.TRIPPED) {
             lines.add("SCRAM: " + operatingState.lastScramReason);
         }
@@ -295,6 +309,11 @@ public class MetaTileEntityConsoleScreen extends MetaTileEntityMultiblockPart
         // Added 2026-09-28 (user request): the reactor's own current power draw (baseline instrumentation +
         // coolant pump combined, see MetaTileEntityPressurizedWaterReactor#updateReactorPowerConsumption).
         lines.add("POWER USE: " + reactor.getTotalPowerConsumptionEuPerTick() + " EU/t");
+        lines.add("RCP: " + (reactor.isRcpRunning() ? "RUNNING" : "STOPPED"));
+        lines.add(rhrLine(reactor));
+        if (reactor.isRhrInService() && reactor.isRhrOutletCapped()) {
+            lines.add("RHR WARNING: COOLING WATER TEMP LIMIT");
+        }
         if (reactor.isAutoRodControlActive()) {
             lines.add("AUTO CONTROL: ON");
         }
@@ -303,6 +322,23 @@ public class MetaTileEntityConsoleScreen extends MetaTileEntityMultiblockPart
                     String.format("%.0f", reactor.getSevereAccidentState().coreMeltFraction * 100.0) + "% !!");
         }
         return lines;
+    }
+
+    /** Stage 1-4a: residual heat removal status, heat removed and cooling water temperatures. */
+    @NotNull
+    private static String rhrLine(@NotNull MetaTileEntityPressurizedWaterReactor reactor) {
+        if (!reactor.isRhrInService()) {
+            return switch (reactor.getRhrNotice()) {
+                case ISOLATED_OVERPRESSURE -> "RHR: ISOLATED (OVERPRESSURE)";
+                case START_REFUSED_TEMPERATURE -> "RHR: STANDBY (START REFUSED: TEMP)";
+                case START_REFUSED_PRESSURE -> "RHR: STANDBY (START REFUSED: PRESS)";
+                default -> "RHR: STANDBY";
+            };
+        }
+        if (reactor.isRhrNoPower()) return "RHR: IN SERVICE (NO POWER)";
+        if (reactor.isRhrNoCoolingWater()) return "RHR: IN SERVICE (NO COOLING WATER)";
+        return String.format("RHR: %.1f MW, CW %.0f->%.0f K", reactor.getRhrHeatRemovalWatts() / 1.0e6,
+                reactor.getRhrCoolingInletKelvin(), reactor.getRhrCoolingOutletKelvin());
     }
 
     @NotNull
@@ -347,7 +383,9 @@ public class MetaTileEntityConsoleScreen extends MetaTileEntityMultiblockPart
     }
 
     /**
-     * Colors each control rod controller by its own insertion depth; fuel ports are a fixed color. Reads
+     * One square per interior channel cell (stage 1-3): plain casing dark gray, an empty port light gray, a fuel
+     * assembly blue-to-red by depletion; a loaded control rod cluster draws a smaller inner square colored
+     * green-to-red by insertion depth on top of its fuel assembly. Reads
      * {@code reactor.getCoreMapCells()} -- an explicitly server-resolved-and-synced snapshot, not
      * {@code getMultiblockParts()} directly (that list is server-only bookkeeping, always empty on the client --
      * see {@link MetaTileEntityPressurizedWaterReactor.CoreMapCell}'s own JavaDoc for this mod's umpteenth run-in
@@ -379,15 +417,24 @@ public class MetaTileEntityConsoleScreen extends MetaTileEntityMultiblockPart
         float cellSquareSize = cellSize * 0.85f;
         float cellSquareMargin = (cellSize - cellSquareSize) / 2f;
         for (MetaTileEntityPressurizedWaterReactor.CoreMapCell cell : cells) {
-            int color = cell.isFuel() ?
-                    lerpColor(COLOR_FUEL, COLOR_FUEL_DEPLETED, (float) cell.degradationLevel()) :
-                    lerpColor(COLOR_CONTROL_ROD_WITHDRAWN, COLOR_CONTROL_ROD_INSERTED, (float) cell.degradationLevel());
+            int color = switch (cell.kind()) {
+                case CASING -> COLOR_CASING_CELL;
+                case EMPTY_PORT -> COLOR_EMPTY_PORT;
+                case FUEL -> lerpColor(COLOR_FUEL, COLOR_FUEL_DEPLETED, cell.depletionPercent() / 100f);
+            };
             // Centered within its own cellSize x cellSize box (equal margin on all four sides), not anchored to
             // the box's top-left corner -- 2026-09-21 feedback: an off-center square put the grid line (drawn at
             // the box boundary) noticeably closer to one neighbor than the other instead of bisecting the gap.
             float cx = originX + (cell.dx() - minX) * cellSize + cellSquareMargin;
             float cz = originY + (cell.dz() - minZ) * cellSize + cellSquareMargin;
             RenderUtil.renderRect(cx, cz, cellSquareSize, cellSquareSize, 0.003f, color);
+            if (cell.hasRod()) {
+                float rodSize = cellSquareSize * 0.5f;
+                float rodMargin = (cellSquareSize - rodSize) / 2f;
+                int rodColor = lerpColor(COLOR_CONTROL_ROD_WITHDRAWN, COLOR_CONTROL_ROD_INSERTED,
+                        cell.rodLevel() / 100f);
+                RenderUtil.renderRect(cx + rodMargin, cz + rodMargin, rodSize, rodSize, 0.0035f, rodColor);
+            }
         }
     }
 

@@ -6,6 +6,7 @@ import gregtech.api.unification.material.properties.FluidPipeProperties;
 import gregtech.api.unification.material.properties.PropertyKey;
 
 import com.windows2000.gtnuclear.api.fluids.attribute.GTNLFluidAttributes;
+import com.windows2000.gtnuclear.api.nuclear.thermal.CoolingWaterTemperatureBands;
 import com.windows2000.gtnuclear.api.nuclear.thermal.ReactorCoolantTemperatureBands;
 
 import static com.windows2000.gtnuclear.api.unification.materials.GTNLMaterials.*;
@@ -106,6 +107,25 @@ public class ReactorFluidMaterials {
                     .build();
         }
         ReactorCoolantWaterBands = bands;
+
+        // Non-radioactive cooling water bands, IDs 144-158 (2026-11-24, stage 1-4a: the cooling side of the
+        // reactor's built-in RHR heat exchanger, and later component cooling water / cooling towers) -- see
+        // CoolingWaterTemperatureBands. Plain fluids without the reactor-coolant attribute, so ordinary GT pipes
+        // carry them. Every band, including 300 K, is its own material (a new system, unlike the primary coolant
+        // bands' reuse of an older fluid). Pale blue at 300 K toward warm orange at 370 K, purely cosmetic.
+        Material[] coolingBands = new Material[CoolingWaterTemperatureBands.BAND_TEMPERATURES_KELVIN.length];
+        int coolColor = 0x7AB8E8;
+        int warmColor = 0xE8A060;
+        for (int i = 0; i < coolingBands.length; i++) {
+            int temperatureKelvin = (int) CoolingWaterTemperatureBands.BAND_TEMPERATURES_KELVIN[i];
+            double t = coolingBands.length > 1 ? (double) i / (coolingBands.length - 1) : 0.0;
+            coolingBands[i] = Material.builder(144 + i, gtnlID("cooling_water_" + temperatureKelvin + "_kelvin"))
+                    .liquid(new FluidBuilder().temperature(temperatureKelvin))
+                    .color(interpolateColor(coolColor, warmColor, t))
+                    .iconSet(METALLIC)
+                    .build();
+        }
+        CoolingWaterBands = coolingBands;
 
         FluidPipeProperties pipeProperties = ReactorCoolantPipeAlloy.getProperty(PropertyKey.FLUID_PIPE);
         pipeProperties.setCanContain(GTNLFluidAttributes.REACTOR_COOLANT_WATER, true);

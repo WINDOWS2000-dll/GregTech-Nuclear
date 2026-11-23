@@ -37,11 +37,20 @@ public final class SevereAccidentProgressionTracker {
         boolean isLoca = LOCADetector.isLOCA(host.getCoolantMassKg(), ratedCoolantMassKg,
                 ConfigHolder.reactor.locaCoolantFraction);
         boolean voidAbnormal = host.getPrimaryVoidFraction() > ConfigHolder.reactor.severeAccidentVoidFractionThreshold;
-        boolean abnormalCoolingOrControl = isLoca || host.isFuelControlRodHousingMismatch() || voidAbnormal;
-        // MELTDOWN-stage corium still submerged in coolant risks a steam explosion on contact -- a deliberate
-        // simplification of far more complex real energetics, same spirit as SevereAccidentConstants' own
-        // explosion-magnitude formula.
-        boolean coolantContactWithCorium = host.getCoolantMassKg() > 0;
+        // Stage 1-2 (2026-11-21, see this mod's design memory, S3): loss of cooling/control can only heat a core
+        // that actually holds fuel AND currently produces heat. Without this gate, an empty reactor -- or a cold,
+        // fueled, zero-power reactor in the middle of its initial fill (still "LOCA" by inventory) -- was declared
+        // UNCONTROLLED_HEATING (confirmed via real playtest telemetry, 2026-09-29). Decay heat (stage 2) will plug
+        // into hasCoreHeatSource(), so a freshly SCRAMmed core that loses coolant still escalates as intended.
+        boolean heatGeneratingCore = host.computeTotalCoreFuelMassKg() > 0 && host.hasCoreHeatSource();
+        boolean abnormalCoolingOrControl = heatGeneratingCore &&
+                (isLoca || host.isHousingMismatch() || voidAbnormal);
+        // Stage 1-2 (2026-11-21, see this mod's design memory, S1): the previous "any coolant at all means molten
+        // fuel/coolant contact" criterion escalated every MELTDOWN straight to EXPLOSION on the very next tick
+        // whenever a single kilogram of coolant remained. Disabled until the severe-accident design is revisited
+        // (break modeling, melt relocation, steam explosion conditions); until then only the melt-fraction
+        // threshold can trigger an explosion. SevereAccidentEvaluator's own contact branch is kept as-is.
+        boolean coolantContactWithCorium = false;
         double totalCoreFuelMassKgForEvaluator = host.getMeltedFuelMassKg() > 0 ?
                 host.getCoreFuelMassAtMeltdownStartKg() : host.computeTotalCoreFuelMassKg();
 

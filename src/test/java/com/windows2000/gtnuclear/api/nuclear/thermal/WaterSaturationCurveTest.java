@@ -15,6 +15,14 @@ class WaterSaturationCurveTest {
     }
 
     @Test
+    void saturationTemperatureAtAtmosphericPressureIsNormalBoilingPoint() {
+        // The floor a depressurized reactor now sits at (stage 1-2, 2026-11-21): ~373 K, not the triple point.
+        double temperature = WaterSaturationCurve.saturationTemperature(
+                WaterSaturationCurve.ATMOSPHERIC_PRESSURE_PASCALS);
+        assertThat(temperature, closeTo(373.12, 0.2));
+    }
+
+    @Test
     void saturationPressureAtTypicalSteamTableCheckPointMatchesKnownValue() {
         // 300 degC (573.15 K) -> ~8.581 MPa is a standard steam-table reference value.
         double pressure = WaterSaturationCurve.saturationPressure(573.15);

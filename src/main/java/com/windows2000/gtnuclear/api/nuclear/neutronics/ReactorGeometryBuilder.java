@@ -36,4 +36,22 @@ public final class ReactorGeometryBuilder {
                     ReactorNodeFactory.moderatorNode(position));
         }
     }
+
+    /**
+     * One fuel assembly channel (2026-11-21, stage 1-3 of this mod's reactor physics rework): fuel nodes from
+     * {@code bottomYRelative} up through {@code bottomYRelative + fuelLengthLayers - 1}, water (moderator) nodes
+     * for the rest of the channel up to {@code topYRelative} -- an assembly shorter than its channel sits on the
+     * channel floor with water above it. {@code fuelLengthLayers <= 0} or a {@code null} composition yields a
+     * pure water channel (an empty slot, or a port with no fuel loaded).
+     */
+    public static void addFuelAssemblyColumn(@NotNull ReactorGeometry geometry, int dx, int dz,
+                                             int bottomYRelative, int topYRelative, int fuelLengthLayers,
+                                             @Nullable FuelComposition composition) {
+        int fuelTopY = composition != null ? bottomYRelative + fuelLengthLayers - 1 : bottomYRelative - 1;
+        for (int y = bottomYRelative; y <= topYRelative; y++) {
+            NodePosition position = new NodePosition(dx, y, dz);
+            geometry.put(y <= fuelTopY ? ReactorNodeFactory.fuelNode(position, composition) :
+                    ReactorNodeFactory.moderatorNode(position));
+        }
+    }
 }

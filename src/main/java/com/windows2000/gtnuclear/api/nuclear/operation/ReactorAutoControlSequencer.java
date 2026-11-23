@@ -168,6 +168,12 @@ public final class ReactorAutoControlSequencer {
         if (host.getOperatingState().stage == ReactorOperatingStage.SHUTDOWN) {
             return "shutdown";
         }
+        // Stage 1-1 (2026-11-21, see this mod's design memory): a tripped reactor's rods are dropping in and
+        // latched until a manual reset -- the loop must never fight that. Before this guard, real playtest logs
+        // (2026-09-24/25) showed this loop withdrawing rods after a trip, driving a power excursion and meltdown.
+        if (host.getOperatingState().stage == ReactorOperatingStage.TRIPPED) {
+            return "tripped";
+        }
         return updateAutoRodControlAscensionOrHold(host);
     }
 

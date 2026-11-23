@@ -2,6 +2,7 @@ package com.windows2000.gtnuclear.common.util;
 
 import net.minecraft.util.math.BlockPos;
 
+import com.windows2000.gtnuclear.api.nuclear.thermal.EnergyLedger;
 import com.windows2000.gtnuclear.api.util.GTNLLogger;
 import com.windows2000.gtnuclear.common.metatileentities.multi.MetaTileEntityHeatExchanger;
 import org.jetbrains.annotations.NotNull;
@@ -34,7 +35,9 @@ public final class HeatExchangerTelemetryLogger implements AutoCloseable {
     private HeatExchangerTelemetryLogger(@NotNull PrintWriter writer) {
         this.writer = writer;
         writer.println("elapsedSeconds,primarySideTemperatureKelvin,primarySideMassKg," +
-                "secondaryWaterTemperatureKelvin,secondaryWaterMassKg,qRemovedWatts");
+                "secondaryWaterTemperatureKelvin,secondaryWaterMassKg,qRemovedWatts," +
+                "ledgerTicks,ePrimaryImportJ,eFeedwaterJ,ePrimaryExportJ,eSteamJ,eBlowdownJ,eStoredDeltaJ," +
+                "eResidualJ,eTransferJ,eBandRoundingJ");
         writer.flush();
     }
 
@@ -63,13 +66,24 @@ public final class HeatExchangerTelemetryLogger implements AutoCloseable {
 
     public void logRow(double elapsedSeconds, @NotNull MetaTileEntityHeatExchanger heatExchanger,
                        double qRemovedWatts) {
-        writer.printf("%.2f,%.2f,%.2f,%.2f,%.2f,%.1f%n",
+        EnergyLedger<HeatExchangerEnergyCategory> ledger = heatExchanger.getEnergyLedger();
+        writer.printf("%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%d,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e%n",
                 elapsedSeconds,
                 heatExchanger.getPrimarySideTemperatureKelvin(),
                 heatExchanger.getPrimarySideMassKg(),
                 heatExchanger.getSecondaryWaterTemperatureKelvin(),
                 heatExchanger.getSecondaryWaterMassKg(),
-                qRemovedWatts);
+                qRemovedWatts,
+                ledger.ticks(),
+                ledger.get(HeatExchangerEnergyCategory.PRIMARY_IMPORT),
+                ledger.get(HeatExchangerEnergyCategory.FEEDWATER),
+                ledger.get(HeatExchangerEnergyCategory.PRIMARY_EXPORT),
+                ledger.get(HeatExchangerEnergyCategory.STEAM),
+                ledger.get(HeatExchangerEnergyCategory.BLOWDOWN),
+                ledger.get(HeatExchangerEnergyCategory.STORED_CHANGE),
+                ledger.residualJoules(HeatExchangerEnergyCategory.values()),
+                ledger.get(HeatExchangerEnergyCategory.TRANSFER),
+                ledger.get(HeatExchangerEnergyCategory.BAND_ROUNDING));
         writer.flush();
     }
 

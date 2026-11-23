@@ -17,6 +17,15 @@ public final class WaterSaturationCurve {
     public static final double CRITICAL_PRESSURE_PASCALS = 22.064e6;
     /** Triple point temperature of water (K) -- the lower validity bound of this correlation. */
     public static final double TRIPLE_POINT_TEMPERATURE_KELVIN = 273.16;
+    /**
+     * Standard atmospheric pressure (absolute). Added 2026-11-21 (stage 1-2 of this mod's reactor physics rework,
+     * see this mod's design memory): every pressure this mod feeds into {@link #saturationTemperature} is absolute,
+     * and a depressurized/vented loop sits at atmospheric pressure (saturation ~373 K), not vacuum -- before this
+     * floor existed, the reactor's own "depressurized" 0 MPa was treated as vacuum, putting saturation at the
+     * triple point (273.16 K) so that injecting 300 K water into a depressurized reactor spuriously "boiled" it
+     * (confirmed via real playtest telemetry: coolant pinned at 273.2 K with 38-63% void during a fill).
+     */
+    public static final double ATMOSPHERIC_PRESSURE_PASCALS = 101325.0;
 
     private static final double A1 = -7.85951783;
     private static final double A2 = 1.84408259;

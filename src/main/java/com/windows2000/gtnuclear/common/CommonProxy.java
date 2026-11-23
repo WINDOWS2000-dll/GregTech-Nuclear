@@ -36,7 +36,6 @@ public class CommonProxy {
         registry.register(TEST_CASING);
         registry.register(REACTOR_VESSEL_CASING);
         registry.register(FUEL_ROD_HOUSING);
-        registry.register(CONTROL_ROD_HOUSING);
         registry.register(HEAT_EXCHANGER_CASING);
         registry.register(TURBINE_CASING);
     }
@@ -49,7 +48,6 @@ public class CommonProxy {
         registry.register(createItemBlock(TEST_CASING, VariantItemBlock::new));
         registry.register(createItemBlock(REACTOR_VESSEL_CASING, VariantItemBlock::new));
         registry.register(createItemBlock(FUEL_ROD_HOUSING, VariantItemBlock::new));
-        registry.register(createItemBlock(CONTROL_ROD_HOUSING, VariantItemBlock::new));
         registry.register(createItemBlock(HEAT_EXCHANGER_CASING, VariantItemBlock::new));
         registry.register(createItemBlock(TURBINE_CASING, VariantItemBlock::new));
 

@@ -10,46 +10,56 @@ import net.minecraft.creativetab.CreativeTabs;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
-import net.minecraft.nbt.NBTTagDouble;
+import net.minecraft.nbt.NBTTagIntArray;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.nbt.NBTTagString;
+import net.minecraft.util.NonNullList;
 import net.minecraft.util.text.TextFormatting;
 import net.minecraft.world.World;
 import net.minecraftforge.common.util.Constants;
 
+import com.windows2000.gtnuclear.api.nuclear.fuel.FuelAssemblyState;
 import com.windows2000.gtnuclear.api.nuclear.fuel.FuelComposition;
+import com.windows2000.gtnuclear.api.nuclear.fuel.PackedDoubles;
 import com.windows2000.gtnuclear.api.nuclear.neutronics.XenonIodineState;
 import com.windows2000.gtnuclear.common.ConfigHolder;
+import com.windows2000.gtnuclear.common.metatileentities.multiblockpart.FuelAssemblyPortText;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * A fuel rod item carrying an evolving, NBT-tracked absolute isotope inventory ({@code Map<Element, Double>},
- * mirroring {@code MetaTileEntityIsotopeStorage}'s NBT shape) rather than a fixed composition -- one registered
- * {@code Item} instance per enrichment tier (see {@code GTNLFuelCompositions}), but each individual
- * {@link ItemStack} tracks its own depleting inventory as {@link com.windows2000.gtnuclear.api.nuclear.fuel.
- * FuelBurnupEngine} consumes it (wiring into the reactor's tick loop is a separate, not-yet-done task -- see this
- * mod's design memory). A stack with no NBT yet (freshly crafted, or an existing stack before this field existed)
- * is treated as full: {@link #getIsotopeAmounts} seeds it from {@link #initialComposition}'s mole fractions scaled
- * by {@code ConfigHolder.reactor.fuelRodUraniumMassKg}.
+ * A fuel assembly item (shown as "Fuel Assembly" -- the class keeps its historical name) -- one registered
+ * {@code Item} per enrichment tier (see {@code GTNLFuelCompositions}), each stack carrying its own fabricated
+ * length and per-layer state (2026-11-21, stage 1-3 of this mod's reactor physics rework, see this mod's design
+ * memory and {@link FuelAssemblyState}'s own JavaDoc for the composition unit and versioning rules).
  * <p>
- * {@link #getIsotopeAmounts}/{@link #setIsotopeAmounts} are the only way anything should read or write a fuel
- * rod's current inventory -- {@code MetaTileEntityFuelPort#getLoadedComposition()} derives its
- * {@link FuelComposition} from {@link #getIsotopeAmounts} every call, not from {@link #initialComposition}, so a
- * rod's in-game neutronics performance degrades automatically as its real isotope makeup shifts.
+ * NBT layout: {@code Length} (layers, see {@link AssemblyLength}), {@code StateVersion}, {@code Nuclides} (symbol
+ * header), {@code Composition}/{@code Poisons}/{@code DecayHeat} (layer-major doubles packed into
+ * {@code NBTTagIntArray}s via {@link PackedDoubles}), {@code DecayHeatGroups}. A stack with a length but no state
+ * yet is fresh (state is created lazily on first write). A stack without a length cannot be loaded at all.
+ * <p>
+ * Stage 1 (until per-node physics in stage 4): the reactor still evaluates one value per channel, so
+ * {@link #setIsotopeAmounts}/{@link #setLocalXenonIodineState} write the same value into every layer and the
+ * getters read layer averages.
  */
 public class ItemFuelRod extends Item implements ITintedItem {
 
-    private static final String NBT_ISOTOPES = "Isotopes";
-    private static final String NBT_SYMBOL = "Symbol";
-    private static final String NBT_AMOUNT = "Amount";
-    private static final String NBT_LOCAL_IODINE = "LocalIodineConcentration";
-    private static final String NBT_LOCAL_XENON = "LocalXenonConcentration";
+    private static final String NBT_STATE_VERSION = "StateVersion";
+    private static final String NBT_NUCLIDES = "Nuclides";
+    private static final String NBT_COMPOSITION = "Composition";
+    private static final String NBT_POISONS = "Poisons";
+    private static final String NBT_DECAY_HEAT = "DecayHeat";
+    private static final String NBT_DECAY_HEAT_GROUPS = "DecayHeatGroups";
 
-    /** This rod type's fresh-from-the-factory enrichment tier -- see {@code GTNLFuelCompositions}. */
+    /** Mass ratio UO2 / U (270 / 238) -- converts heavy-metal mass into fuel (oxide) mass for heat capacity. */
+    public static final double UO2_TO_URANIUM_MASS_RATIO = 270.0 / 238.0;
+
+    /** This assembly type's fresh-from-the-factory enrichment tier -- see {@code GTNLFuelCompositions}. */
     @NotNull
     public final FuelComposition initialComposition;
     /** This tier's own tint color -- see {@link ITintedItem}'s own JavaDoc on why every tier shares one texture. */
@@ -69,114 +79,182 @@ public class ItemFuelRod extends Item implements ITintedItem {
         return tintColor;
     }
 
+    @Override
+    public void getSubItems(@NotNull CreativeTabs tab, @NotNull NonNullList<ItemStack> items) {
+        if (!isInCreativeTab(tab)) return;
+        for (int layers : AssemblyLength.CREATIVE_TAB_LENGTHS) {
+            items.add(AssemblyLength.withLength(new ItemStack(this), layers));
+        }
+    }
+
+    /** Fresh composition by symbol ({@code n_k} of a never-irradiated layer). */
+    @NotNull
+    public Map<String, Double> freshFractions() {
+        Map<String, Double> fractions = new LinkedHashMap<>();
+        double total = 0.0;
+        for (double value : initialComposition.moleFractionByIsotope.values()) total += value;
+        for (Map.Entry<Element, Double> entry : initialComposition.moleFractionByIsotope.entrySet()) {
+            fractions.put(entry.getKey().symbol, total > 0 ? entry.getValue() / total : 0.0);
+        }
+        return fractions;
+    }
+
+    /** U-235 atom fraction of a fresh layer, for display. */
+    public double freshU235Fraction() {
+        return freshFractions().getOrDefault(Elements.U235.symbol, 0.0);
+    }
+
+    /** @return this stack's state, or {@code null} if it has no fabricated length (not loadable). */
+    @Nullable
+    public FuelAssemblyState getState(@NotNull ItemStack stack) {
+        int length = AssemblyLength.get(stack);
+        if (length <= 0) return null;
+        NBTTagCompound tag = stack.getTagCompound();
+        if (tag == null || !tag.hasKey(NBT_COMPOSITION)) return FuelAssemblyState.fresh(length, freshFractions());
+
+        List<String> nuclides = new ArrayList<>();
+        NBTTagList list = tag.getTagList(NBT_NUCLIDES, Constants.NBT.TAG_STRING);
+        for (int i = 0; i < list.tagCount(); i++) nuclides.add(list.getStringTagAt(i));
+        return FuelAssemblyState.restore(length, tag.getInteger(NBT_STATE_VERSION), nuclides,
+                unpack(tag, NBT_COMPOSITION), unpack(tag, NBT_POISONS), unpack(tag, NBT_DECAY_HEAT),
+                tag.getInteger(NBT_DECAY_HEAT_GROUPS), freshFractions());
+    }
+
+    /** Persists {@code state} into {@code stack} (keeping its own {@code Length}). */
+    public void setState(@NotNull ItemStack stack, @NotNull FuelAssemblyState state) {
+        if (!stack.hasTagCompound()) stack.setTagCompound(new NBTTagCompound());
+        NBTTagCompound tag = stack.getTagCompound();
+        tag.setInteger(NBT_STATE_VERSION, FuelAssemblyState.CURRENT_VERSION);
+        NBTTagList nuclides = new NBTTagList();
+        for (String symbol : state.nuclides()) nuclides.appendTag(new NBTTagString(symbol));
+        tag.setTag(NBT_NUCLIDES, nuclides);
+        tag.setTag(NBT_COMPOSITION, new NBTTagIntArray(PackedDoubles.pack(state.compositionArray())));
+        tag.setTag(NBT_POISONS, new NBTTagIntArray(PackedDoubles.pack(state.poisonArray())));
+        tag.setTag(NBT_DECAY_HEAT, new NBTTagIntArray(PackedDoubles.pack(state.decayHeatArray())));
+        tag.setInteger(NBT_DECAY_HEAT_GROUPS, state.decayHeatGroups());
+    }
+
+    @NotNull
+    private static double[] unpack(@NotNull NBTTagCompound tag, @NotNull String key) {
+        if (!tag.hasKey(key, Constants.NBT.TAG_INT_ARRAY)) return new double[0];
+        return PackedDoubles.unpack(tag.getIntArray(key));
+    }
+
     /**
-     * @return {@code stack}'s current isotope inventory (absolute amounts, e.g. kg), reading persisted NBT if
-     *         present, or a fresh full inventory derived from {@link #initialComposition} otherwise. Never empty.
+     * @return the layer-averaged composition ({@code n_k}, atoms per initial heavy-metal atom) mapped to
+     *         {@link Element}s, or a fresh composition for a stack without a length. Callers using this as
+     *         "amounts" (e.g. {@code FuelBurnupEngine}) are unit-agnostic, so the dimensionless {@code n_k} works
+     *         unchanged.
      */
     @NotNull
     public Map<Element, Double> getIsotopeAmounts(@NotNull ItemStack stack) {
-        NBTTagCompound tag = stack.getTagCompound();
-        if (tag == null || !tag.hasKey(NBT_ISOTOPES)) return freshIsotopeAmounts();
-
+        FuelAssemblyState state = getState(stack);
+        Map<String, Double> bySymbol = state != null ? state.averageComposition() : freshFractions();
         Map<Element, Double> amounts = new LinkedHashMap<>();
-        NBTTagList list = tag.getTagList(NBT_ISOTOPES, Constants.NBT.TAG_COMPOUND);
-        for (int i = 0; i < list.tagCount(); i++) {
-            NBTTagCompound entryTag = list.getCompoundTagAt(i);
-            Element element = Elements.get(entryTag.getString(NBT_SYMBOL));
-            if (element != null) {
-                amounts.put(element, entryTag.getDouble(NBT_AMOUNT));
-            }
-        }
-        return amounts.isEmpty() ? freshIsotopeAmounts() : amounts;
-    }
-
-    /** Persists {@code amounts} as {@code stack}'s current isotope inventory. */
-    public void setIsotopeAmounts(@NotNull ItemStack stack, @NotNull Map<Element, Double> amounts) {
-        NBTTagList list = new NBTTagList();
-        for (Map.Entry<Element, Double> entry : amounts.entrySet()) {
-            NBTTagCompound entryTag = new NBTTagCompound();
-            entryTag.setString(NBT_SYMBOL, entry.getKey().symbol);
-            entryTag.setDouble(NBT_AMOUNT, entry.getValue());
-            list.appendTag(entryTag);
-        }
-        stack.setTagInfo(NBT_ISOTOPES, list);
-    }
-
-    /**
-     * @param fallback this rod's own local xenon/iodine state if never tracked yet (a freshly crafted rod, or
-     *                 one loaded before this mod tracked per-rod xenon) -- callers seed this from the
-     *                 reactor's own previously-reactor-wide xenon state the first time a rod is read, so
-     *                 introducing per-rod tracking does not discontinuously reset accumulated poisoning on an
-     *                 existing save (see {@code MetaTileEntityPressurizedWaterReactor}'s own JavaDoc for where
-     *                 this is called).
-     * @return {@code stack}'s own locally-tracked xenon/iodine state, or {@code fallback} if never tracked yet
-     */
-    @NotNull
-    public XenonIodineState getLocalXenonIodineState(@NotNull ItemStack stack, @NotNull XenonIodineState fallback) {
-        NBTTagCompound tag = stack.getTagCompound();
-        if (tag == null || !tag.hasKey(NBT_LOCAL_XENON)) return fallback;
-        return new XenonIodineState(tag.getDouble(NBT_LOCAL_IODINE), tag.getDouble(NBT_LOCAL_XENON));
-    }
-
-    /** Persists {@code state} as {@code stack}'s own local xenon/iodine state. */
-    public void setLocalXenonIodineState(@NotNull ItemStack stack, @NotNull XenonIodineState state) {
-        stack.setTagInfo(NBT_LOCAL_IODINE, new NBTTagDouble(state.iodineConcentration()));
-        stack.setTagInfo(NBT_LOCAL_XENON, new NBTTagDouble(state.xenonConcentration()));
-    }
-
-    @NotNull
-    private Map<Element, Double> freshIsotopeAmounts() {
-        double totalMassKg = ConfigHolder.reactor.fuelRodUraniumMassKg;
-        Map<Element, Double> amounts = new LinkedHashMap<>();
-        for (Map.Entry<Element, Double> entry : initialComposition.moleFractionByIsotope.entrySet()) {
-            amounts.put(entry.getKey(), entry.getValue() * totalMassKg);
+        for (Map.Entry<String, Double> entry : bySymbol.entrySet()) {
+            Element element = Elements.get(entry.getKey());
+            if (element != null) amounts.put(element, entry.getValue());
         }
         return amounts;
     }
 
+    /** Writes {@code amounts} ({@code n_k}) into every layer -- stage 1's one-value-per-channel interim. */
+    public void setIsotopeAmounts(@NotNull ItemStack stack, @NotNull Map<Element, Double> amounts) {
+        FuelAssemblyState state = getState(stack);
+        if (state == null) return;
+        Map<String, Double> bySymbol = new LinkedHashMap<>();
+        for (Map.Entry<Element, Double> entry : amounts.entrySet()) bySymbol.put(entry.getKey().symbol,
+                entry.getValue());
+        state.setAllLayersComposition(bySymbol);
+        setState(stack, state);
+    }
+
     /**
-     * No hard "fuel lifetime" threshold is modeled (2026-09 design decision, see this mod's design memory) -- a
-     * rod is simply whatever fraction of its original fission-producing capability remains, which the reactor's
-     * own neutronics already degrades smoothly as burnup proceeds. Weighted by each isotope's own fission cross-
-     * sections ({@link NeutronCrossSections#thermalFissionBarns}/{@code fastFissionBarns}, the same data
-     * {@link com.windows2000.gtnuclear.api.nuclear.fuel.FuelBurnupEngine} and {@link com.windows2000.gtnuclear.api.
-     * nuclear.neutronics.ReactorNodeFactory} already use) rather than a flat "U-235 only" mass ratio, so this
-     * naturally: (a) barely counts fertile U-238 (its own fission cross-sections are negligible), and (b) credits
-     * bred Pu-239 back towards the total exactly as much as it actually contributes to fissioning -- a rod that
-     * breeds a useful amount of plutonium as its U-235 depletes reads as "holding up better" than one that
-     * doesn't, which is physically correct.
+     * @param fallback returned for a stack whose poisons have never been written (all zero is a legitimate fresh
+     *                 state, so "never written" is detected by the absence of any composition state at all)
+     * @return the layer-averaged xenon/iodine state
+     */
+    @NotNull
+    public XenonIodineState getLocalXenonIodineState(@NotNull ItemStack stack, @NotNull XenonIodineState fallback) {
+        NBTTagCompound tag = stack.getTagCompound();
+        FuelAssemblyState state = getState(stack);
+        if (state == null || tag == null || !tag.hasKey(NBT_COMPOSITION)) return fallback;
+        return new XenonIodineState(state.averagePoison(FuelAssemblyState.POISON_IODINE),
+                state.averagePoison(FuelAssemblyState.POISON_XENON));
+    }
+
+    /** Writes {@code xenonState} into every layer -- stage 1's one-value-per-channel interim. */
+    public void setLocalXenonIodineState(@NotNull ItemStack stack, @NotNull XenonIodineState xenonState) {
+        FuelAssemblyState state = getState(stack);
+        if (state == null) return;
+        for (int layer = 0; layer < state.length(); layer++) {
+            state.setPoison(layer, FuelAssemblyState.POISON_IODINE, xenonState.iodineConcentration());
+            state.setPoison(layer, FuelAssemblyState.POISON_XENON, xenonState.xenonConcentration());
+        }
+        setState(stack, state);
+    }
+
+    /** Initial uranium (heavy metal) mass of the whole assembly (kg). */
+    public double initialUraniumMassKg(@NotNull ItemStack stack) {
+        return AssemblyLength.get(stack) * ConfigHolder.reactor.fuelUraniumPerLayerKg;
+    }
+
+    /** Current mass (kg) of one nuclide in the whole assembly, from its {@code n_k} and the fresh heavy-metal mass. */
+    public double isotopeMassKg(@NotNull ItemStack stack, @NotNull Element element) {
+        FuelAssemblyState state = getState(stack);
+        if (state == null) return 0.0;
+        double freshMeanMass = 0.0;
+        for (Map.Entry<String, Double> entry : freshFractions().entrySet()) {
+            Element fresh = Elements.get(entry.getKey());
+            if (fresh != null) freshMeanMass += entry.getValue() * fresh.getMass();
+        }
+        if (freshMeanMass <= 0) return 0.0;
+        double atomsPerInitialHeavyMetalAtom = state.averageComposition().getOrDefault(element.symbol, 0.0);
+        return initialUraniumMassKg(stack) * atomsPerInitialHeavyMetalAtom * element.getMass() / freshMeanMass;
+    }
+
+    /**
+     * No hard "fuel lifetime" threshold is modeled (2026-09 design decision, see this mod's design memory) -- an
+     * assembly is simply whatever fraction of its original fission-producing capability remains. Weighted by each
+     * nuclide's own fission cross-sections, so fertile U-238 barely counts and bred Pu-239 is credited.
      *
-     * @return current / fresh fission-weighted mass, clamped to {@code [0, 1]}; {@code 1.0} for a freshly-crafted
-     *         rod, trending towards {@code 0.0} as fissile content is consumed
+     * @return current / fresh fission-weighted content, clamped to {@code [0, 1]}
      */
     public double getFissileCapabilityFraction(@NotNull ItemStack stack) {
-        double initial = fissionWeightedMass(freshIsotopeAmounts());
+        double initial = fissionWeighted(freshFractions());
         if (initial <= 0) return 0.0;
-        double current = fissionWeightedMass(getIsotopeAmounts(stack));
+        FuelAssemblyState state = getState(stack);
+        double current = fissionWeighted(state != null ? state.averageComposition() : freshFractions());
         return Math.max(0.0, Math.min(1.0, current / initial));
     }
 
-    private static double fissionWeightedMass(@NotNull Map<Element, Double> amounts) {
+    private static double fissionWeighted(@NotNull Map<String, Double> bySymbol) {
         double total = 0.0;
-        for (Map.Entry<Element, Double> entry : amounts.entrySet()) {
-            NeutronCrossSections crossSections = entry.getKey().crossSections;
+        for (Map.Entry<String, Double> entry : bySymbol.entrySet()) {
+            Element element = Elements.get(entry.getKey());
+            if (element == null) continue;
+            NeutronCrossSections crossSections = element.crossSections;
             if (crossSections == null) continue;
             total += entry.getValue() * (crossSections.thermalFissionBarns + crossSections.fastFissionBarns);
         }
         return total;
     }
 
-    /**
-     * Below this {@link #getFissileCapabilityFraction} threshold, {@link #addInformation} adds a replacement-
-     * recommended tooltip line -- an implementer-chosen display threshold (2026-09 design memory explicitly left
-     * this unspecified), not a hard gameplay cutoff; the rod keeps fissioning (at a correspondingly reduced rate)
-     * below it exactly like above it.
-     */
+    /** Display threshold below which the tooltip recommends replacement -- not a gameplay cutoff. */
     private static final double REPLACEMENT_RECOMMENDED_THRESHOLD = 0.2;
 
     @Override
     public void addInformation(ItemStack stack, @Nullable World world, List<String> tooltip, ITooltipFlag advanced) {
         super.addInformation(stack, world, tooltip, advanced);
+        int length = AssemblyLength.get(stack);
+        if (length <= 0) {
+            tooltip.add(TextFormatting.RED + I18n.format("gtnuclear.assembly.tooltip.no_length"));
+            return;
+        }
+        tooltip.add(TextFormatting.GRAY + I18n.format("gtnuclear.assembly.tooltip.length",
+                FuelAssemblyPortText.length(length)));
+        tooltip.add(TextFormatting.GRAY + I18n.format("gtnuclear.fuel_rod.tooltip.uranium",
+                FuelAssemblyPortText.kilograms(initialUraniumMassKg(stack))));
         double remaining = getFissileCapabilityFraction(stack);
         TextFormatting color = remaining < REPLACEMENT_RECOMMENDED_THRESHOLD ? TextFormatting.RED :
                 remaining < 0.5 ? TextFormatting.YELLOW : TextFormatting.GREEN;

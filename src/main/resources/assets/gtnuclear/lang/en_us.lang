@@ -47,6 +47,7 @@ gtnuclear.machine.control_console.name=Control Console
 gtnuclear.machine.neutron_source_hatch.name=Neutron Source Hatch
 gtnuclear.machine.feedwater_import_hatch.name=Feedwater Import Hatch
 gtnuclear.machine.high_pressure_steam_export_hatch.name=High Pressure Steam Export Hatch
+gtnuclear.machine.steam_dump_condensate_export_hatch.name=Steam Dump Condensate Export Hatch
 gtnuclear.machine.heat_exchanger.name=Heat Exchanger
 gtnuclear.machine.advanced_reactor_coolant_import_hatch.name=Advanced Reactor Coolant Import Hatch
 gtnuclear.machine.advanced_reactor_coolant_export_hatch.name=Advanced Reactor Coolant Export Hatch
@@ -75,6 +76,12 @@ gtnuclear.multiblock.heat_exchanger.primary_coolant=Primary Coolant: %s K, %s kg
 gtnuclear.multiblock.heat_exchanger.secondary_water=Secondary Water: %s K, %s kg
 gtnuclear.multiblock.heat_exchanger.heat_transfer=Heat Transfer: %s MW
 gtnuclear.multiblock.heat_exchanger.steam_output=Steam Output: %s mB/t
+gtnuclear.multiblock.heat_exchanger.setpoint_normal=Setpoint: %s MPa (rated, normal mode)
+gtnuclear.multiblock.heat_exchanger.setpoint_cooldown=COOLDOWN MODE - target %s MPa, held %s MPa
+gtnuclear.multiblock.heat_exchanger.pressure=Secondary: %s MPa (boils at %s K)
+gtnuclear.multiblock.heat_exchanger.steam_dump=Steam Dump: %s kg/s, cooldown %s K/h
+gtnuclear.multiblock.heat_exchanger.relief=SAFETY VALVES OPEN: %s kg/s
+gtnuclear.gui.heat_exchanger.cooldown_mode=Cooldown Mode
 item.gtnuclear.neutron_source_rod.californium_252.name=Californium-252 Neutron Source Rod
 
 # Fuel Assembly Port provisional UI (see com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityFuelAssemblyPort)

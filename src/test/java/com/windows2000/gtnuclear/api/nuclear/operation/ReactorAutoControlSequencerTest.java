@@ -46,8 +46,10 @@ class ReactorAutoControlSequencerTest {
         FakeAutoControlHost host = new FakeAutoControlHost();
         host.operatingState = new ReactorOperatingState(ReactorOperatingStage.OPERATING, null);
 
+        // A 20-tick interval means the next action fires 20 ticks after the first (19 silent ticks in between) --
+        // the pre-2026-11-26 code (and this test) used 21, which made every telemetry CSV run ~5% slow.
         assertEquals("manual", sequencer.update(host));
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 19; i++) {
             assertNull(sequencer.update(host), "tick " + i + " should still be within the same interval");
         }
         assertEquals("manual", sequencer.update(host));

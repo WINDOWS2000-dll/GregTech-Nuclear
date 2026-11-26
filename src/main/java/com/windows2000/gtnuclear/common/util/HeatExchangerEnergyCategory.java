@@ -22,6 +22,10 @@ public enum HeatExchangerEnergyCategory implements EnergyLedger.Category {
     /** Secondary water mass discarded above its rated inventory after feedwater mixing (blowdown abstraction). */
     BLOWDOWN(EnergyLedger.Kind.OUTFLOW),
     /** Change in primary-side + secondary-side internal energy. */
+    /** Steam sent to the steam dump / condenser (stage 1-4b). */
+    STEAM_DUMP(EnergyLedger.Kind.OUTFLOW),
+    /** Steam vented by the main steam safety valves (stage 1-4b). */
+    RELIEF(EnergyLedger.Kind.OUTFLOW),
     STORED_CHANGE(EnergyLedger.Kind.STORED_CHANGE),
     /** Primary-to-secondary heat transfer -- internal to this component, recorded for reference only. */
     TRANSFER(EnergyLedger.Kind.INFO),

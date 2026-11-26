@@ -40,6 +40,9 @@ public final class GTNLMultiblockAbility {
     public static final MultiblockAbility<IFluidTank> FEEDWATER_IMPORT = fluidAbility("feedwater_import");
     public static final MultiblockAbility<IFluidTank> HIGH_PRESSURE_STEAM_EXPORT = fluidAbility(
             "high_pressure_steam_export");
+    /** Heat exchanger's steam dump condensate (water) output -- stage 1-4b, see {@code SecondarySideBoiling}. */
+    public static final MultiblockAbility<IFluidTank> STEAM_DUMP_CONDENSATE_EXPORT = fluidAbility(
+            "steam_dump_condensate_export");
 
     /**
      * Turbine fluid ports -- see {@code MetaTileEntityHighPressureSteamTurbine}/

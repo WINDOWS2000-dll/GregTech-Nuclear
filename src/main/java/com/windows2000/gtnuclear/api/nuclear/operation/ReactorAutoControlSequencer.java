@@ -159,7 +159,10 @@ public final class ReactorAutoControlSequencer {
     private String updateAutoRodControl(@NotNull AutoControlHost host) {
         if (ticksUntilNextAction-- > 0) return null;
         int intervalTicks = ConfigHolder.reactor.autoControlIntervalTicks;
-        ticksUntilNextAction = intervalTicks;
+        // "- 1": the post-decrement check above fires once the counter has already counted down through 0, so
+        // resetting it to intervalTicks made the real period intervalTicks + 1 while elapsedSeconds advanced by
+        // only intervalTicks -- every reactor telemetry CSV ran ~5% slow at the default 20 (fixed 2026-11-26).
+        ticksUntilNextAction = Math.max(0, intervalTicks - 1);
         elapsedSeconds += intervalTicks * TICK_SECONDS;
 
         if (!active) {

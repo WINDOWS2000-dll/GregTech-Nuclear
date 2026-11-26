@@ -37,7 +37,8 @@ public final class HeatExchangerTelemetryLogger implements AutoCloseable {
         writer.println("elapsedSeconds,primarySideTemperatureKelvin,primarySideMassKg," +
                 "secondaryWaterTemperatureKelvin,secondaryWaterMassKg,qRemovedWatts," +
                 "ledgerTicks,ePrimaryImportJ,eFeedwaterJ,ePrimaryExportJ,eSteamJ,eBlowdownJ,eStoredDeltaJ," +
-                "eResidualJ,eTransferJ,eBandRoundingJ");
+                "eResidualJ,eTransferJ,eBandRoundingJ,cooldownMode,targetSetpointMPa,effectiveSetpointMPa," +
+                "secondaryPressureMPa,steamDumpKgPerS,reliefKgPerS,cooldownRateKPerH,eSteamDumpJ,eReliefJ");
         writer.flush();
     }
 
@@ -67,7 +68,8 @@ public final class HeatExchangerTelemetryLogger implements AutoCloseable {
     public void logRow(double elapsedSeconds, @NotNull MetaTileEntityHeatExchanger heatExchanger,
                        double qRemovedWatts) {
         EnergyLedger<HeatExchangerEnergyCategory> ledger = heatExchanger.getEnergyLedger();
-        writer.printf("%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%d,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e%n",
+        writer.printf("%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%d,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e," +
+                "%s,%.3f,%.3f,%.3f,%.2f,%.2f,%.2f,%.6e,%.6e%n",
                 elapsedSeconds,
                 heatExchanger.getPrimarySideTemperatureKelvin(),
                 heatExchanger.getPrimarySideMassKg(),
@@ -83,7 +85,16 @@ public final class HeatExchangerTelemetryLogger implements AutoCloseable {
                 ledger.get(HeatExchangerEnergyCategory.STORED_CHANGE),
                 ledger.residualJoules(HeatExchangerEnergyCategory.values()),
                 ledger.get(HeatExchangerEnergyCategory.TRANSFER),
-                ledger.get(HeatExchangerEnergyCategory.BAND_ROUNDING));
+                ledger.get(HeatExchangerEnergyCategory.BAND_ROUNDING),
+                heatExchanger.isCooldownMode(),
+                heatExchanger.getTargetSetpointMPa(),
+                heatExchanger.getEffectiveSetpointMPa(),
+                heatExchanger.getSecondaryPressureMPa(),
+                heatExchanger.getLastDumpKgPerSecond(),
+                heatExchanger.getLastReliefKgPerSecond(),
+                heatExchanger.getCooldownRateKelvinPerHour(),
+                ledger.get(HeatExchangerEnergyCategory.STEAM_DUMP),
+                ledger.get(HeatExchangerEnergyCategory.RELIEF));
         writer.flush();
     }
 

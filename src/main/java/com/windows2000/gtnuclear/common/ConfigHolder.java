@@ -1156,5 +1156,32 @@ public class ConfigHolder {
                 "Default: 1.0" })
         @Config.RangeDouble(min = 0.0, max = 1.0E6)
         public double rhrCooldownAssistFactor = 1.0;
+
+        // ---------------------------------------------------------------- heat exchanger cooldown (stage 1-4b)
+
+        @Config.Comment({
+                "Fastest the heat exchanger's effective secondary pressure setpoint may be lowered, expressed as " +
+                        "the fall of its saturation temperature (K per hour) -- the operator sets a target and " +
+                        "the setpoint ramps toward it (2026-11-26, stage 1-4b, decision R1). Raise it only to " +
+                        "shorten cooldown while testing.",
+                "Default: 55.6 (100 F/h, the real PWR reactor coolant cooldown rate limit)" })
+        @Config.RangeDouble(min = 0.0, max = 1.0E6)
+        public double secondaryCooldownRateKelvinPerHour = 55.6;
+
+        @Config.Comment({
+                "Steam dump (to condenser) capacity per heat exchanger (kg/s). Steam that the turbines cannot take " +
+                        "-- all of it in cooldown mode -- is dumped up to this rate and leaves through the steam " +
+                        "dump condensate export hatch as water.",
+                "Default: 1346.7, 40% (the real design value) of the reference reactor's full-power steam flow " +
+                        "(168,333 mB/t)." })
+        @Config.RangeDouble(min = 0.0, max = 1.0E9)
+        public double steamDumpCapacityKgPerSecond = 1346.7;
+
+        @Config.Comment({
+                "Main steam safety valve setpoint (MPa, absolute): above this saturation pressure the secondary " +
+                        "side vents steam to atmosphere instead of rising further.",
+                "Default: 8.3 (the real first-stage setpoint)" })
+        @Config.RangeDouble(min = 0.0, max = 1.0E3)
+        public double mainSteamSafetyValvePressureMPa = 8.3;
     }
 }

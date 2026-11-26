@@ -54,6 +54,7 @@ public class GTNLMetaTileEntities {
     public static MetaTileEntityHeatExchanger HEAT_EXCHANGER;
     public static MetaTileEntityReactorFluidPort FEEDWATER_IMPORT_HATCH;
     public static MetaTileEntityReactorFluidPort HIGH_PRESSURE_STEAM_EXPORT_HATCH;
+    public static MetaTileEntityReactorFluidPort STEAM_DUMP_CONDENSATE_EXPORT_HATCH;
 
     // HP/LP turbine stages and their own dedicated fluid ports/rotor slot -- see
     // MetaTileEntityHighPressureSteamTurbine/MetaTileEntityLowPressureSteamTurbine's own JavaDoc.

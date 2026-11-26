@@ -3,13 +3,16 @@ package com.windows2000.gtnuclear.common.metatileentities.multi;
 import gregtech.api.metatileentity.MetaTileEntity;
 import gregtech.api.metatileentity.interfaces.IGregTechTileEntity;
 import gregtech.api.metatileentity.multiblock.IMultiblockPart;
+import gregtech.api.metatileentity.multiblock.MultiblockAbility;
 import gregtech.api.metatileentity.multiblock.MultiblockWithDisplayBase;
 import gregtech.api.metatileentity.multiblock.ProgressBarMultiblock;
 import gregtech.api.metatileentity.multiblock.ui.MultiblockUIBuilder;
+import gregtech.api.metatileentity.multiblock.ui.MultiblockUIFactory;
 import gregtech.api.metatileentity.multiblock.ui.TemplateBarBuilder;
 import gregtech.api.mui.GTGuiTextures;
 import gregtech.api.pattern.BlockPattern;
 import gregtech.api.pattern.FactoryBlockPattern;
+import gregtech.api.unification.material.Materials;
 import gregtech.api.util.KeyUtil;
 import gregtech.api.util.RelativeDirection;
 import gregtech.api.util.TextFormattingUtil;
@@ -26,11 +29,18 @@ import net.minecraftforge.fluids.IFluidTank;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
 
+import com.cleanroommc.modularui.api.drawable.IKey;
+import com.cleanroommc.modularui.network.NetworkUtils;
+import com.cleanroommc.modularui.value.sync.BooleanSyncValue;
 import com.cleanroommc.modularui.value.sync.IntSyncValue;
 import com.cleanroommc.modularui.value.sync.PanelSyncManager;
+import com.cleanroommc.modularui.widget.ParentWidget;
+import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.windows2000.gtnuclear.api.metatileentity.multiblock.GTNLMultiblockAbility;
 import com.windows2000.gtnuclear.api.nuclear.thermal.CoolantThermalSolver;
 import com.windows2000.gtnuclear.api.nuclear.thermal.EnergyLedger;
+import com.windows2000.gtnuclear.api.nuclear.thermal.SecondaryPressureControl;
+import com.windows2000.gtnuclear.api.nuclear.thermal.SecondarySideBoiling;
 import com.windows2000.gtnuclear.api.nuclear.thermal.SteamProperties;
 import com.windows2000.gtnuclear.api.nuclear.thermal.WaterSaturationCurve;
 import com.windows2000.gtnuclear.api.unification.materials.GTNLMaterials;
@@ -109,6 +119,90 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
     private int lastSteamOutputMb = 0;
 
     /** Read by this class's own display. */
+    // ---------------------------------------------------------------- cooldown mode / steam dump (stage 1-4b)
+
+    /**
+     * Cooldown mode (2026-11-26, stage 1-4b, see this mod's design memory): the pressure setpoint becomes adjustable
+     * down to atmospheric, and all steam goes to the steam dump instead of the turbines. Off = normal operation at
+     * the rated setpoint ({@code ConfigHolder.reactor.secondaryPressureMPa}).
+     */
+    private boolean cooldownMode = false;
+    /** Operator's target setpoint (MPa, absolute); only below rated while {@link #cooldownMode}. */
+    private double targetSetpointMPa = ConfigHolder.reactor.secondaryPressureMPa;
+    /**
+     * The setpoint actually held, as its saturation temperature (K), ramping toward the target -- see
+     * {@link SecondaryPressureControl} for why it is not stored as a pressure.
+     */
+    private double effectiveSetpointSaturationKelvin = SecondaryPressureControl
+            .saturationKelvinOf(ConfigHolder.reactor.secondaryPressureMPa);
+    // Display-only values (synced, not persisted).
+    private double lastDumpKgPerSecond = 0.0;
+    private double lastReliefKgPerSecond = 0.0;
+    private double cooldownRateKelvinPerHour = 0.0;
+    /**
+     * Primary-side temperature sampled once per {@link #THERMAL_SYNC_INTERVAL_TICKS} (1 s) over the last
+     * {@link #COOLDOWN_RATE_WINDOW_SAMPLES} samples (3 minutes) -- the displayed cooldown rate is the average over
+     * this window, because the returning coolant arrives quantized to 5 K bands, so a 1-second difference read
+     * ~30 K/h most of the time and spiked to hundreds of K/h whenever the band switched (2026-11-26 playtest).
+     */
+    private static final int COOLDOWN_RATE_WINDOW_SAMPLES = 180;
+    private final double[] cooldownRateSamples = new double[COOLDOWN_RATE_WINDOW_SAMPLES];
+    private int cooldownRateSampleCount = 0;
+    private int cooldownRateNextIndex = 0;
+
+    public boolean isCooldownMode() {
+        return cooldownMode;
+    }
+
+    public double getTargetSetpointMPa() {
+        return targetSetpointMPa;
+    }
+
+    public double getEffectiveSetpointMPa() {
+        return WaterSaturationCurve.saturationPressure(effectiveSetpointSaturationKelvin) / 1.0e6;
+    }
+
+    /** The secondary side's actual pressure: the saturation pressure of its water, never below atmospheric. */
+    public double getSecondaryPressureMPa() {
+        return Math.max(SecondaryPressureControl.MIN_SETPOINT_MPA,
+                WaterSaturationCurve.saturationPressure(secondaryWaterTemperatureKelvin) / 1.0e6);
+    }
+
+    public double getLastDumpKgPerSecond() {
+        return lastDumpKgPerSecond;
+    }
+
+    public double getLastReliefKgPerSecond() {
+        return lastReliefKgPerSecond;
+    }
+
+    /** Primary-side cooling rate averaged over the last 3 minutes (K/h, positive while cooling). */
+    public double getCooldownRateKelvinPerHour() {
+        return cooldownRateKelvinPerHour;
+    }
+
+    /** GUI command: toggle cooldown mode; leaving it returns the target and setpoint to rated. */
+    private void toggleCooldownMode() {
+        cooldownMode = !cooldownMode;
+        if (!cooldownMode) {
+            targetSetpointMPa = ConfigHolder.reactor.secondaryPressureMPa;
+            effectiveSetpointSaturationKelvin = SecondaryPressureControl
+                    .saturationKelvinOf(ConfigHolder.reactor.secondaryPressureMPa);
+        }
+        writeCustomData(UPDATE_THERMAL_STATE, this::writeThermalState);
+        markDirty();
+    }
+
+    /** GUI command: move the target setpoint by {@code deltaMPa} (cooldown mode only, atmospheric to rated). */
+    private void adjustTargetSetpoint(double deltaMPa) {
+        if (!cooldownMode) return;
+        double rated = ConfigHolder.reactor.secondaryPressureMPa;
+        targetSetpointMPa = Math.max(SecondaryPressureControl.MIN_SETPOINT_MPA,
+                Math.min(rated, targetSetpointMPa + deltaMPa));
+        writeCustomData(UPDATE_THERMAL_STATE, this::writeThermalState);
+        markDirty();
+    }
+
     public double getPrimarySideTemperatureKelvin() {
         return primarySideTemperatureKelvin;
     }
@@ -157,7 +251,7 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
     @Override
     protected BlockPattern createStructurePattern() {
         return FactoryBlockPattern.start(RelativeDirection.RIGHT, RelativeDirection.DOWN, RelativeDirection.BACK)
-                .aisle("CCC", "ECV", "CCC")
+                .aisle("CCC", "EDV", "CCC")
                 .aisle("CCC", "ICF", "CCC")
                 .aisle("CCC", "CSC", "CMC")
                 .where('S', selfPredicate())
@@ -166,6 +260,7 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
                 .where('E', abilities(GTNLMultiblockAbility.REACTOR_COOLANT_EXPORT))
                 .where('F', abilities(GTNLMultiblockAbility.FEEDWATER_IMPORT))
                 .where('V', abilities(GTNLMultiblockAbility.HIGH_PRESSURE_STEAM_EXPORT))
+                .where('D', abilities(GTNLMultiblockAbility.STEAM_DUMP_CONDENSATE_EXPORT))
                 .where('C', states(GTNLMetaBlocks.REACTOR_VESSEL_CASING
                         .getState(ReactorVesselCasing.CasingType.PWR_REACTOR_VESSEL)))
                 .build();
@@ -186,6 +281,10 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
     @Override
     protected void updateFormedValid() {
         double storedEnergyBeforeJoules = computeStoredEnergyJoules();
+        effectiveSetpointSaturationKelvin = SecondaryPressureControl.rampSetpointSaturationKelvin(
+                effectiveSetpointSaturationKelvin, SecondaryPressureControl.saturationKelvinOf(
+                        cooldownMode ? targetSetpointMPa : ConfigHolder.reactor.secondaryPressureMPa),
+                ConfigHolder.reactor.secondaryCooldownRateKelvinPerHour, TICK_SECONDS);
         receivePrimaryCoolant();
         double qRemovedWatts = coolPrimaryAndPumpBack();
         updateSecondarySide(qRemovedWatts);
@@ -248,7 +347,73 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
                     keyList.add(KeyUtil.lang(TextFormatting.GRAY, "gtnuclear.multiblock.heat_exchanger.steam_output",
                             TextFormattingUtil.formatNumbers(steamOutput)));
                 })
+                .addCustom((keyList, syncer) -> {
+                    boolean cooldown = syncer.syncBoolean(cooldownMode);
+                    double target = syncer.syncDouble(targetSetpointMPa);
+                    double effective = syncer.syncDouble(getEffectiveSetpointMPa());
+                    keyList.add(KeyUtil.lang(cooldown ? TextFormatting.AQUA : TextFormatting.GRAY,
+                            cooldown ? "gtnuclear.multiblock.heat_exchanger.setpoint_cooldown" :
+                                    "gtnuclear.multiblock.heat_exchanger.setpoint_normal",
+                            String.format("%.2f", target), String.format("%.2f", effective)));
+                })
+                .addCustom((keyList, syncer) -> {
+                    double pressure = syncer.syncDouble(getSecondaryPressureMPa());
+                    double saturation = syncer.syncDouble(effectiveSetpointSaturationKelvin);
+                    keyList.add(KeyUtil.lang(TextFormatting.GRAY, "gtnuclear.multiblock.heat_exchanger.pressure",
+                            String.format("%.2f", pressure), String.format("%.0f", saturation)));
+                })
+                .addCustom((keyList, syncer) -> {
+                    double dump = syncer.syncDouble(lastDumpKgPerSecond);
+                    double rate = syncer.syncDouble(cooldownRateKelvinPerHour);
+                    boolean overRate = rate > ConfigHolder.reactor.secondaryCooldownRateKelvinPerHour * 1.05;
+                    keyList.add(KeyUtil.lang(overRate ? TextFormatting.RED : TextFormatting.GRAY,
+                            "gtnuclear.multiblock.heat_exchanger.steam_dump", String.format("%.0f", dump),
+                            String.format("%.1f", rate)));
+                })
+                .addCustom((keyList, syncer) -> {
+                    double relief = syncer.syncDouble(lastReliefKgPerSecond);
+                    if (relief > 0) {
+                        keyList.add(KeyUtil.lang(TextFormatting.RED, "gtnuclear.multiblock.heat_exchanger.relief",
+                                String.format("%.0f", relief)));
+                    }
+                })
                 .addWorkingStatusLine();
+    }
+
+    /** Stage 1-4b: the cooldown mode toggle and target setpoint buttons, inside the display screen. */
+    @Override
+    protected MultiblockUIFactory createUIFactory() {
+        return super.createUIFactory()
+                .setSize(198, 268)
+                .setScreenHeight(175)
+                .addScreenChildren(this::addCooldownButtons);
+    }
+
+    private static final double[] SETPOINT_STEPS_MPA = { -1.0, -0.1, 0.1, 1.0 };
+    private static final String[] SETPOINT_STEP_LABELS = { "-1.0", "-0.1", "+0.1", "+1.0" };
+
+    private void addCooldownButtons(@NotNull ParentWidget<?> parent, @NotNull PanelSyncManager syncManager) {
+        parent.child(button("hx_cooldown_toggle", syncManager, this::toggleCooldownMode,
+                IKey.lang("gtnuclear.gui.heat_exchanger.cooldown_mode")).pos(4, 136).size(90, 16));
+        for (int i = 0; i < SETPOINT_STEPS_MPA.length; i++) {
+            double step = SETPOINT_STEPS_MPA[i];
+            parent.child(button("hx_setpoint_" + i, syncManager, () -> adjustTargetSetpoint(step),
+                    IKey.str(SETPOINT_STEP_LABELS[i])).pos(4 + i * 46, 154).size(44, 16));
+        }
+    }
+
+    /** Same server-side-only BooleanSyncValue trigger pattern as {@code MetaTileEntityControlConsole}'s buttons. */
+    @NotNull
+    private static ButtonWidget<?> button(@NotNull String syncKey, @NotNull PanelSyncManager syncManager,
+                                          @NotNull Runnable action, @NotNull IKey label) {
+        BooleanSyncValue trigger = new BooleanSyncValue(() -> false, val -> {
+            if (val && !NetworkUtils.isClient()) action.run();
+        });
+        syncManager.syncValue(syncKey, trigger);
+        return new ButtonWidget<>().overlay(label).onMousePressed(mouseButton -> {
+            trigger.setBoolValue(true);
+            return true;
+        });
     }
 
     @Override
@@ -310,7 +475,8 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
             telemetryLogger = HeatExchangerTelemetryLogger.open(getPos());
         }
         if (telemetryTicksUntilNextLog-- > 0) return;
-        telemetryTicksUntilNextLog = TELEMETRY_INTERVAL_TICKS;
+        // "- 1": see ReactorAutoControlSequencer's same fix (2026-11-26) -- the real period was interval + 1.
+        telemetryTicksUntilNextLog = TELEMETRY_INTERVAL_TICKS - 1;
         telemetryElapsedSeconds += TELEMETRY_INTERVAL_TICKS * TICK_SECONDS;
         telemetryLogger.logRow(telemetryElapsedSeconds, this, qRemovedWatts);
         energyLedger.reset();
@@ -393,8 +559,7 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
         }
         double qRemovedWatts = ConfigHolder.reactor.heatExchangerUAWattsPerKelvin *
                 Math.max(0.0, primarySideTemperatureKelvin - secondaryWaterTemperatureKelvin);
-        double saturationTemperatureKelvin = WaterSaturationCurve.saturationTemperature(
-                ConfigHolder.reactor.secondaryPressureMPa * 1.0e6);
+        double saturationTemperatureKelvin = effectiveSetpointSaturationKelvin;
         if (secondaryWaterTemperatureKelvin < saturationTemperatureKelvin) {
             double maxSubcooledAbsorptionWatts = secondaryWaterMassKg *
                     CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY *
@@ -448,48 +613,66 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
     private void updateSecondarySide(double qInputWatts) {
         replenishFeedwater();
 
-        double saturationTemperatureKelvin = WaterSaturationCurve.saturationTemperature(
-                ConfigHolder.reactor.secondaryPressureMPa * 1.0e6);
+        double setpointSaturationKelvin = effectiveSetpointSaturationKelvin;
+        double reliefSaturationKelvin = WaterSaturationCurve.saturationTemperature(
+                ConfigHolder.reactor.mainSteamSafetyValvePressureMPa * 1.0e6);
         double candidateKelvin = CoolantThermalSolver.advance(secondaryWaterTemperatureKelvin, qInputWatts,
                 secondaryWaterMassKg, CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY, TICK_SECONDS);
-        if (candidateKelvin < saturationTemperatureKelvin || secondaryWaterMassKg <= 0) {
-            secondaryWaterTemperatureKelvin = candidateKelvin;
-            lastSteamOutputMb = 0;
-            return;
-        }
 
-        double excessJoules = (candidateKelvin - saturationTemperatureKelvin) * secondaryWaterMassKg *
-                CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY;
-        double desiredEvaporationKg = Math.min(secondaryWaterMassKg,
-                excessJoules / SteamProperties.LATENT_HEAT_OF_VAPORIZATION_J_PER_KG);
-        int desiredMb = (int) Math.round(desiredEvaporationKg * 1000.0);
-        int actualMb = Math.min(desiredMb, computeSteamExportHeadroomMb());
+        // Stage 1-4b: turbines first (none in cooldown mode), then the steam dump, then the water keeps the heat
+        // (pressure above setpoint), then the safety valves -- see SecondarySideBoiling. Nothing is deleted.
+        int exportCapacityMb = cooldownMode ? 0 : computeHeadroomMb(GTNLMultiblockAbility.HIGH_PRESSURE_STEAM_EXPORT);
+        int dumpCapacityMb = Math.min(
+                (int) Math.floor(ConfigHolder.reactor.steamDumpCapacityKgPerSecond * TICK_SECONDS * 1000.0),
+                computeHeadroomMb(GTNLMultiblockAbility.STEAM_DUMP_CONDENSATE_EXPORT));
+        SecondarySideBoiling.Result result = SecondarySideBoiling.boil(secondaryWaterMassKg, candidateKelvin,
+                setpointSaturationKelvin, exportCapacityMb / 1000.0, dumpCapacityMb / 1000.0, reliefSaturationKelvin,
+                CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY,
+                SteamProperties.LATENT_HEAT_OF_VAPORIZATION_J_PER_KG);
 
-        secondaryWaterTemperatureKelvin = saturationTemperatureKelvin;
-        if (actualMb <= 0) {
-            lastSteamOutputMb = 0;
-            return;
-        }
+        int exportMb = fill(GTNLMultiblockAbility.HIGH_PRESSURE_STEAM_EXPORT,
+                GTNLMaterials.HighPressureSteam.getFluid(), (int) Math.floor(result.exportedKg() * 1000.0));
+        int dumpMb = fill(GTNLMultiblockAbility.STEAM_DUMP_CONDENSATE_EXPORT, Materials.Water.getFluid(),
+                (int) Math.floor(result.dumpedKg() * 1000.0));
+        // Whole-mB rounding of the outputs: any sub-mB remainder of boiled steam simply stays in the water, with its
+        // energy, so the balance stays exact.
+        double steamJoulesPerKg = liquidEnthalpyJoules(1.0, setpointSaturationKelvin) +
+                SteamProperties.LATENT_HEAT_OF_VAPORIZATION_J_PER_KG;
+        double exportKg = exportMb / 1000.0;
+        double dumpKg = dumpMb / 1000.0;
+        double unsentKg = (result.exportedKg() - exportKg) + (result.dumpedKg() - dumpKg);
+        double massAfterKg = result.waterMassKg() + unsentKg;
+        double energyAfterJoules = liquidEnthalpyJoules(result.waterMassKg(), result.waterTemperatureKelvin()) +
+                unsentKg * steamJoulesPerKg;
+        secondaryWaterMassKg = massAfterKg;
+        secondaryWaterTemperatureKelvin = massAfterKg > 0 ?
+                AMBIENT_TEMPERATURE_KELVIN + energyAfterJoules /
+                        (massAfterKg * CoolantThermalSolver.REPRESENTATIVE_SPECIFIC_HEAT_CAPACITY) :
+                result.waterTemperatureKelvin();
 
-        int filledMb = 0;
-        for (IFluidTank tank : getAbilities(GTNLMultiblockAbility.HIGH_PRESSURE_STEAM_EXPORT)) {
-            if (filledMb >= actualMb) break;
-            filledMb += tank.fill(new FluidStack(GTNLMaterials.HighPressureSteam.getFluid(), actualMb - filledMb),
-                    true);
-        }
-        lastSteamOutputMb = filledMb;
-        if (filledMb > 0) {
-            double steamMassKg = filledMb / 1000.0;
-            energyLedger.add(HeatExchangerEnergyCategory.STEAM, liquidEnthalpyJoules(steamMassKg,
-                    saturationTemperatureKelvin) + steamMassKg * SteamProperties.LATENT_HEAT_OF_VAPORIZATION_J_PER_KG);
-            secondaryWaterMassKg -= steamMassKg;
-            markDirty();
-        }
+        energyLedger.add(HeatExchangerEnergyCategory.STEAM, exportKg * steamJoulesPerKg);
+        energyLedger.add(HeatExchangerEnergyCategory.STEAM_DUMP, dumpKg * steamJoulesPerKg);
+        energyLedger.add(HeatExchangerEnergyCategory.RELIEF, result.reliefJoules());
+        lastSteamOutputMb = exportMb;
+        lastDumpKgPerSecond = dumpKg / TICK_SECONDS;
+        lastReliefKgPerSecond = result.reliefKg() / TICK_SECONDS;
+        markDirty();
     }
 
-    private int computeSteamExportHeadroomMb() {
+    /** Fills up to {@code amountMb} of {@code fluid} across the given ability's tanks; returns the amount filled. */
+    private int fill(@NotNull MultiblockAbility<IFluidTank> ability, @NotNull Fluid fluid, int amountMb) {
+        if (amountMb <= 0) return 0;
+        int filledMb = 0;
+        for (IFluidTank tank : getAbilities(ability)) {
+            if (filledMb >= amountMb) break;
+            filledMb += tank.fill(new FluidStack(fluid, amountMb - filledMb), true);
+        }
+        return filledMb;
+    }
+
+    private int computeHeadroomMb(@NotNull MultiblockAbility<IFluidTank> ability) {
         int headroomMb = 0;
-        for (IFluidTank tank : getAbilities(GTNLMultiblockAbility.HIGH_PRESSURE_STEAM_EXPORT)) {
+        for (IFluidTank tank : getAbilities(ability)) {
             FluidStack existing = tank.getFluid();
             headroomMb += tank.getCapacity() - (existing != null ? existing.amount : 0);
         }
@@ -560,10 +743,27 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
         return energyLedger;
     }
 
+    /** Adds this second's primary-side sample and recomputes the 3-minute average cooldown rate. */
+    private void updateCooldownRate() {
+        cooldownRateSamples[cooldownRateNextIndex] = primarySideTemperatureKelvin;
+        cooldownRateNextIndex = (cooldownRateNextIndex + 1) % COOLDOWN_RATE_WINDOW_SAMPLES;
+        if (cooldownRateSampleCount < COOLDOWN_RATE_WINDOW_SAMPLES) cooldownRateSampleCount++;
+        if (cooldownRateSampleCount < 2) {
+            cooldownRateKelvinPerHour = 0.0;
+            return;
+        }
+        int newest = (cooldownRateNextIndex - 1 + COOLDOWN_RATE_WINDOW_SAMPLES) % COOLDOWN_RATE_WINDOW_SAMPLES;
+        int oldest = (cooldownRateNextIndex - cooldownRateSampleCount + COOLDOWN_RATE_WINDOW_SAMPLES) %
+                COOLDOWN_RATE_WINDOW_SAMPLES;
+        double spanHours = (cooldownRateSampleCount - 1) * THERMAL_SYNC_INTERVAL_TICKS * TICK_SECONDS / 3600.0;
+        cooldownRateKelvinPerHour = (cooldownRateSamples[oldest] - cooldownRateSamples[newest]) / spanHours;
+    }
+
     /** Same "periodic timer, not change-triggered" sync pattern as the reactor's own display fields. */
     private void syncThermalStatePeriodically() {
         if (thermalSyncTicks-- > 0) return;
-        thermalSyncTicks = THERMAL_SYNC_INTERVAL_TICKS;
+        thermalSyncTicks = THERMAL_SYNC_INTERVAL_TICKS - 1;
+        updateCooldownRate();
         writeCustomData(UPDATE_THERMAL_STATE, this::writeThermalState);
     }
 
@@ -572,6 +772,12 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
         buf.writeDouble(primarySideMassKg);
         buf.writeDouble(secondaryWaterTemperatureKelvin);
         buf.writeDouble(secondaryWaterMassKg);
+        buf.writeBoolean(cooldownMode);
+        buf.writeDouble(targetSetpointMPa);
+        buf.writeDouble(effectiveSetpointSaturationKelvin);
+        buf.writeDouble(lastDumpKgPerSecond);
+        buf.writeDouble(lastReliefKgPerSecond);
+        buf.writeDouble(cooldownRateKelvinPerHour);
     }
 
     private void readThermalState(@NotNull PacketBuffer buf) {
@@ -579,6 +785,12 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
         primarySideMassKg = buf.readDouble();
         secondaryWaterTemperatureKelvin = buf.readDouble();
         secondaryWaterMassKg = buf.readDouble();
+        cooldownMode = buf.readBoolean();
+        targetSetpointMPa = buf.readDouble();
+        effectiveSetpointSaturationKelvin = buf.readDouble();
+        lastDumpKgPerSecond = buf.readDouble();
+        lastReliefKgPerSecond = buf.readDouble();
+        cooldownRateKelvinPerHour = buf.readDouble();
     }
 
     @Override
@@ -608,6 +820,9 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
         data.setDouble("PrimarySideMassKg", primarySideMassKg);
         data.setDouble("SecondaryWaterTemperatureKelvin", secondaryWaterTemperatureKelvin);
         data.setDouble("SecondaryWaterMassKg", secondaryWaterMassKg);
+        data.setBoolean("CooldownMode", cooldownMode);
+        data.setDouble("TargetSetpointMPa", targetSetpointMPa);
+        data.setDouble("EffectiveSetpointSaturationKelvin", effectiveSetpointSaturationKelvin);
         return data;
     }
 
@@ -620,5 +835,11 @@ public class MetaTileEntityHeatExchanger extends MultiblockWithDisplayBase imple
         secondaryWaterTemperatureKelvin = data.hasKey("SecondaryWaterTemperatureKelvin") ?
                 data.getDouble("SecondaryWaterTemperatureKelvin") : 300.0;
         secondaryWaterMassKg = data.getDouble("SecondaryWaterMassKg");
+        cooldownMode = data.getBoolean("CooldownMode");
+        double rated = ConfigHolder.reactor.secondaryPressureMPa;
+        targetSetpointMPa = data.hasKey("TargetSetpointMPa") ? data.getDouble("TargetSetpointMPa") : rated;
+        effectiveSetpointSaturationKelvin = data.hasKey("EffectiveSetpointSaturationKelvin") ?
+                data.getDouble("EffectiveSetpointSaturationKelvin") :
+                SecondaryPressureControl.saturationKelvinOf(rated);
     }
 }

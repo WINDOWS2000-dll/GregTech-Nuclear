@@ -190,6 +190,11 @@ public class GTNLMetaTileEntityRegistration {
                 GTNLMultiblockAbility.RHR_COOLING_WATER_IMPORT, rhrInletFluids, 4000000);
         RHR_COOLING_WATER_EXPORT_HATCH = registerFluidPort(28, "rhr_cooling_water_export_hatch", true,
                 GTNLMultiblockAbility.RHR_COOLING_WATER_EXPORT, coolingWaterBandFluids, 4000000);
+
+        // Heat exchanger steam dump condensate output (2026-11-26, stage 1-4b, decision D2): dumped steam leaves as
+        // condenser water, like the low-pressure turbine's own condensate export -- pipe it back to feedwater.
+        STEAM_DUMP_CONDENSATE_EXPORT_HATCH = registerFluidPort(29, "steam_dump_condensate_export_hatch", true,
+                GTNLMultiblockAbility.STEAM_DUMP_CONDENSATE_EXPORT, Materials.Water.getFluid(), 12800000);
     }
 
     private static MetaTileEntityReactorFluidPort registerFluidPort(int id, String name, boolean isExportHatch,

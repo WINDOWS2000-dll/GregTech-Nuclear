@@ -147,4 +147,25 @@ class ReactorOperatingEvaluatorTest {
         assertThat(state.stage, is(ReactorOperatingStage.SHUTDOWN));
         assertThat(state.lastScramReason, nullValue());
     }
+
+    @Test
+    void refuelingOnlyFromShutdownAndBackToShutdown() {
+        ReactorOperatingState refueling = ReactorOperatingEvaluator.beginRefueling(ReactorOperatingState.initial());
+        assertThat(refueling.stage, is(ReactorOperatingStage.REFUELING));
+        assertThat(ReactorOperatingEvaluator.endRefueling(refueling).stage, is(ReactorOperatingStage.SHUTDOWN));
+
+        ReactorOperatingState tripped = new ReactorOperatingState(ReactorOperatingStage.TRIPPED, ScramReason.MANUAL);
+        assertThat(ReactorOperatingEvaluator.beginRefueling(tripped).stage, is(ReactorOperatingStage.TRIPPED));
+        ReactorOperatingState operating = new ReactorOperatingState(ReactorOperatingStage.OPERATING, null);
+        assertThat(ReactorOperatingEvaluator.beginRefueling(operating).stage, is(ReactorOperatingStage.OPERATING));
+        assertThat(ReactorOperatingEvaluator.endRefueling(operating).stage, is(ReactorOperatingStage.OPERATING));
+    }
+
+    @Test
+    void refuelingCannotBeTrippedOrStarted() {
+        ReactorOperatingState refueling = new ReactorOperatingState(ReactorOperatingStage.REFUELING, null);
+        assertThat(ReactorOperatingEvaluator.scram(refueling, ScramReason.MANUAL).stage,
+                is(ReactorOperatingStage.REFUELING));
+        assertThat(ReactorOperatingEvaluator.beginStartup(refueling).stage, is(ReactorOperatingStage.REFUELING));
+    }
 }

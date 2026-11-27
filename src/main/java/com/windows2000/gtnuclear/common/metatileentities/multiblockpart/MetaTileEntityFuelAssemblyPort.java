@@ -35,6 +35,7 @@ import com.cleanroommc.modularui.widgets.TextWidget;
 import com.cleanroommc.modularui.widgets.slot.ItemSlot;
 import com.windows2000.gtnuclear.api.metatileentity.multiblock.GTNLMultiblockAbility;
 import com.windows2000.gtnuclear.api.nuclear.fuel.FuelComposition;
+import com.windows2000.gtnuclear.common.ConfigHolder;
 import com.windows2000.gtnuclear.common.item.AssemblyLength;
 import com.windows2000.gtnuclear.common.item.GTNLItems;
 import com.windows2000.gtnuclear.common.item.ItemBrokenControlRod;
@@ -272,6 +273,38 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
     }
 
     /**
+     * Whether the slot rules are enforced for this operation: never for this class's own internal writes, and never
+     * on the client (2026-11-27). The server is authoritative -- the client only mirrors what the server's slot sync
+     * tells it, and some of what the rules read is not synced (e.g. the reactor's channel height), so judging on the
+     * client could only make the display disagree with the real contents.
+     */
+    private boolean enforceRules() {
+        return !internalWrite && !(getWorld() != null && getWorld().isRemote);
+    }
+
+    /**
+     * Debug log of every refused slot operation with its judgment context, gated by
+     * {@code ConfigHolder.reactor.debugFuelAssemblyPortLogging} (added 2026-11-27 while investigating a playtest
+     * where items could not be taken out of an unlocked port; that case did not reproduce).
+     */
+    private void debugDenied(@NotNull String operation, int slot, @NotNull ItemStack stack) {
+        if (!ConfigHolder.reactor.debugFuelAssemblyPortLogging) return;
+        FuelAssemblySlotRules.Context ctx = slotContext();
+        boolean client = getWorld() != null && getWorld().isRemote;
+        MetaTileEntityPressurizedWaterReactor reactor = reactor();
+        com.windows2000.gtnuclear.api.util.GTNLLogger.logger.info(
+                "[FAP-DEBUG] {} side={} pos={} slot={} item={} ctx={} reactorFound={} controller={}",
+                operation, client ? "CLIENT" : "SERVER", getPos(), slot, stack, ctx, reactor != null,
+                getController() == null ? "null" : getController().getClass().getSimpleName());
+        if (reactor != null) {
+            com.windows2000.gtnuclear.api.util.GTNLLogger.logger.info(
+                    "[FAP-DEBUG]   reactor stage={} lock={} formed={} channelHeight={}",
+                    reactor.getOperatingState().stage, reactor.getFuelHandlingLock(), reactor.isStructureFormed(),
+                    reactor.getChannelHeightLayers());
+        }
+    }
+
+    /**
      * Reacts to any slot change: an emptied guide tube resets the drive to fully inserted (so the next rod starts
      * inserted); the core shape is stale. Reset on removal rather than on insertion because Forge's
      * {@code SlotItemHandler#isItemValid} temporarily clears and restores the slot via {@code setStackInSlot} --
@@ -305,7 +338,10 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
         @NotNull
         @Override
         public ItemStack insertItem(int slot, @NotNull ItemStack stack, boolean simulate) {
-            if (!stack.isEmpty() && !internalWrite && !canInsert(slot, stack)) return stack;
+            if (!stack.isEmpty() && enforceRules() && !canInsert(slot, stack)) {
+                debugDenied(simulate ? "insertItem(simulate)" : "insertItem", slot, stack);
+                return stack;
+            }
             boolean wasEmpty = getStackInSlot(slot).isEmpty();
             ItemStack remainder = super.insertItem(slot, stack, simulate);
             if (!simulate && remainder.getCount() != stack.getCount()) onSlotChanged(slot, wasEmpty);
@@ -315,7 +351,10 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
         @NotNull
         @Override
         public ItemStack extractItem(int slot, int amount, boolean simulate) {
-            if (!internalWrite && !canExtract(slot)) return ItemStack.EMPTY;
+            if (enforceRules() && !canExtract(slot)) {
+                debugDenied(simulate ? "extractItem(simulate)" : "extractItem", slot, getStackInSlot(slot));
+                return ItemStack.EMPTY;
+            }
             ItemStack extracted = super.extractItem(slot, amount, simulate);
             if (!simulate && !extracted.isEmpty()) onSlotChanged(slot, false);
             return extracted;
@@ -330,17 +369,22 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
         @Override
         public void setStackInSlot(int slot, @NotNull ItemStack stack) {
             ItemStack current = getStackInSlot(slot);
-            if (!internalWrite) {
+            if (enforceRules()) {
                 boolean removing = !current.isEmpty();
                 boolean adding = !stack.isEmpty();
-                if (removing && !canExtract(slot)) return;
+                if (removing && !canExtract(slot)) {
+                    debugDenied("setStackInSlot(remove " + current + " -> " + stack + ")", slot, current);
+                    return;
+                }
                 if (adding && removing) {
                     // Evaluate the insertion as if the slot had just been emptied.
                     if (!FuelAssemblySlotRules.canInsert(slot, kindOf(stack), AssemblyLength.get(stack),
                             contextWithSlotCleared(slot))) {
+                        debugDenied("setStackInSlot(swap)", slot, stack);
                         return;
                     }
                 } else if (adding && !canInsert(slot, stack)) {
+                    debugDenied("setStackInSlot(add)", slot, stack);
                     return;
                 }
             }
@@ -383,6 +427,8 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
     private static final int LOCK_UNFORMED = 0;
     private static final int LOCK_OPEN = 1;
     private static final int LOCK_LOCKED = 2;
+    private static final int LOCK_HOLD = 3;
+    private static final int LOCK_ACCIDENT = 4;
 
     /** Server-side only: on the client every sync value is overwritten from packets. */
     private boolean isServer() {
@@ -406,7 +452,12 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
     private int lockState() {
         MetaTileEntityPressurizedWaterReactor reactor = reactor();
         if (reactor == null) return LOCK_UNFORMED;
-        return reactor.isFuelHandlingAllowed() ? LOCK_OPEN : LOCK_LOCKED;
+        return switch (reactor.getFuelHandlingLock()) {
+            case NONE -> LOCK_OPEN;
+            case HOLD -> LOCK_HOLD;
+            case SEVERE_ACCIDENT -> LOCK_ACCIDENT;
+            case NOT_REFUELING -> LOCK_LOCKED;
+        };
     }
 
     @NotNull
@@ -499,11 +550,13 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
                 .child(IKey.dynamic(() -> IKey.lang(LANG + switch (lock.getIntValue()) {
                 case LOCK_OPEN -> "unlocked";
                 case LOCK_LOCKED -> "locked";
+                case LOCK_HOLD -> "locked_hold";
+                case LOCK_ACCIDENT -> "locked_accident";
                 default -> "unformed";
                 }).get()).asWidget().pos(120, 6).scale(0.8f)
                         .color(() -> switch (lock.getIntValue()) {
                         case LOCK_OPEN -> 0x2E9E2E;
-                        case LOCK_LOCKED -> 0xC03030;
+                        case LOCK_LOCKED, LOCK_HOLD, LOCK_ACCIDENT -> 0xC03030;
                         default -> 0x808080;
                         }))
                 .child(new ItemSlot().slot(SyncHandlers.itemSlot(inventory, FuelAssemblySlotRules.SLOT_FUEL))

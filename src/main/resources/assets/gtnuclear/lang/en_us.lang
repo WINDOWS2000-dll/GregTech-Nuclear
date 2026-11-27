@@ -27,6 +27,8 @@ gtnuclear.gui.control_console.boron_concentration=Boron Conc.
 gtnuclear.gui.control_console.auto_control=Auto Control
 gtnuclear.gui.control_console.rcp=RCP Run/Stop
 gtnuclear.gui.control_console.rhr=RHR Start/Stop
+gtnuclear.gui.control_console.refuel=Refuel Start/End
+gtnuclear.gui.control_console.refuel_resume=Refuel Resume
 
 # MetaTileEntity names (see com.windows2000.gtnuclear.common.metatileentities.GTNLMetaTileEntityRegistration)
 gtnuclear.machine.isotope_storage.name=Isotope Storage
@@ -87,7 +89,9 @@ item.gtnuclear.neutron_source_rod.californium_252.name=Californium-252 Neutron S
 # Fuel Assembly Port provisional UI (see com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityFuelAssemblyPort)
 gtnuclear.gui.fuel_assembly_port.unformed=Not formed
 gtnuclear.gui.fuel_assembly_port.unlocked=Unlocked
-gtnuclear.gui.fuel_assembly_port.locked=Locked (running)
+gtnuclear.gui.fuel_assembly_port.locked=Locked (not refueling)
+gtnuclear.gui.fuel_assembly_port.locked_hold=Locked (refueling hold)
+gtnuclear.gui.fuel_assembly_port.locked_accident=Locked (severe accident)
 gtnuclear.gui.fuel_assembly_port.fuel=Fuel Assembly
 gtnuclear.gui.fuel_assembly_port.insert=Guide Tube Insert
 gtnuclear.gui.fuel_assembly_port.none=(empty)

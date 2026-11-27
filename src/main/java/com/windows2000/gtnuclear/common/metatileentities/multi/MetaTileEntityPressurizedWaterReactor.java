@@ -73,6 +73,7 @@ import com.windows2000.gtnuclear.api.nuclear.operation.ReactorOperatingStage;
 import com.windows2000.gtnuclear.api.nuclear.operation.ReactorOperatingState;
 import com.windows2000.gtnuclear.api.nuclear.operation.ReactorScramEvaluator;
 import com.windows2000.gtnuclear.api.nuclear.operation.ReactorStartupRequirements;
+import com.windows2000.gtnuclear.api.nuclear.operation.RefuelingEvaluator;
 import com.windows2000.gtnuclear.api.nuclear.operation.ScramHost;
 import com.windows2000.gtnuclear.api.nuclear.operation.ScramReason;
 import com.windows2000.gtnuclear.api.nuclear.operation.ScramRodDrop;
@@ -439,6 +440,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         // any withdrawal command -- manual console click or ReactorAutoControlSequencer alike -- is refused until
         // a manual reset; insertion is still harmless and allowed.
         if (operatingState.stage == ReactorOperatingStage.TRIPPED && deltaFraction < 0) return;
+        // Stage 1-4c: rod drives are disconnected during refueling.
+        if (operatingState.stage == ReactorOperatingStage.REFUELING) return;
         for (MetaTileEntityFuelAssemblyPort controlRod : cachedControlRods) {
             if (controlRod.getBankId() == bankId) {
                 controlRod.setInsertionDepth(controlRod.getInsertionDepth() + deltaFraction);
@@ -470,7 +473,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
      * may only be moved while the formed reactor is in {@link ReactorOperatingStage#SHUTDOWN}.
      */
     public boolean isFuelHandlingAllowed() {
-        return operatingState.stage == ReactorOperatingStage.SHUTDOWN;
+        return getFuelHandlingLock() == FuelHandlingLock.NONE;
     }
 
     /** Next tick's {@link #updatePhysicsShape()} recomputes immediately (a port's contents changed). */
@@ -604,6 +607,209 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
      * Display-only, not persisted.
      */
     private int primaryCirculationFlowMb = 0;
+
+    // ---------------------------------------------------------------- refueling, Mode 6 (stage 1-4c, 2026-11-27)
+
+    /** Loading is on automatic hold (ports locked) -- see {@link RefuelingEvaluator#holdReason}. */
+    private boolean refuelingHold = false;
+    @Nullable
+    private RefuelingEvaluator.HoldReason refuelingHoldReason = null;
+    /** Subcritical multiplication at refueling start / last resume -- the count-rate-doubling reference. */
+    private double refuelingBaselineMultiplication = 1.0;
+    /** Whether this reactor has ever been above the shutdown level (fresh cores skip the decay wait). */
+    private boolean everCritical = false;
+    /** World time (ticks) when the reactor was last at or above the shutdown level -- see condition (8). */
+    private long subcriticalSinceWorldTick = 0L;
+    /** Sentinel: not known yet (a world saved before stage 1-4c); set on the first tick. */
+    private static final long UNKNOWN_SUBCRITICAL_SINCE = Long.MIN_VALUE;
+    // Display-only (synced, not persisted).
+    private double subcriticalMultiplication = 1.0;
+    private int operatingMode = 5;
+    @NotNull
+    private String refuelChecklistLine = "";
+    @NotNull
+    private String refuelDetailLine = "";
+
+    /** Why the fuel assembly ports are locked right now. */
+    public enum FuelHandlingLock {
+        NONE,
+        NOT_REFUELING,
+        HOLD,
+        SEVERE_ACCIDENT
+    }
+
+    @NotNull
+    public FuelHandlingLock getFuelHandlingLock() {
+        if (severeAccidentState.stage != SevereAccidentStage.NORMAL) return FuelHandlingLock.SEVERE_ACCIDENT;
+        if (operatingState.stage != ReactorOperatingStage.REFUELING) return FuelHandlingLock.NOT_REFUELING;
+        if (refuelingHold) return FuelHandlingLock.HOLD;
+        return FuelHandlingLock.NONE;
+    }
+
+    public boolean isRefuelingHold() {
+        return refuelingHold;
+    }
+
+    @Nullable
+    public RefuelingEvaluator.HoldReason getRefuelingHoldReason() {
+        return refuelingHoldReason;
+    }
+
+    public double getSubcriticalMultiplication() {
+        return subcriticalMultiplication;
+    }
+
+    public double getRefuelingBaselineMultiplication() {
+        return refuelingBaselineMultiplication;
+    }
+
+    public int getOperatingMode() {
+        return operatingMode;
+    }
+
+    @NotNull
+    public String getRefuelChecklistLine() {
+        return refuelChecklistLine;
+    }
+
+    @NotNull
+    public String getRefuelDetailLine() {
+        return refuelDetailLine;
+    }
+
+    @NotNull
+    private RefuelingEvaluator.Limits refuelingLimits() {
+        return new RefuelingEvaluator.Limits(ConfigHolder.reactor.shutdownCompletePowerThreshold,
+                ConfigHolder.reactor.refuelingMinBoronPpm, ConfigHolder.reactor.refuelingMaxTemperatureKelvin,
+                ATMOSPHERIC_PRESSURE_MPA + 0.001, ConfigHolder.reactor.refuelingMinSubcriticalMinutes);
+    }
+
+    /** Minutes since the reactor was last at or above the shutdown level; infinite for a never-critical core. */
+    private double subcriticalMinutes() {
+        if (!everCritical || getWorld() == null) return Double.POSITIVE_INFINITY;
+        if (subcriticalSinceWorldTick == UNKNOWN_SUBCRITICAL_SINCE) return 0.0;
+        return Math.max(0L, getWorld().getTotalWorldTime() - subcriticalSinceWorldTick) / 20.0 / 60.0;
+    }
+
+    private boolean allRodDrivesInserted() {
+        for (MetaTileEntityFuelAssemblyPort port : cachedControlRods) {
+            if (port.getInsertionDepth() < FULLY_INSERTED_THRESHOLD) return false;
+        }
+        return true;
+    }
+
+    @NotNull
+    private Map<RefuelingEvaluator.Condition, RefuelingEvaluator.Status> refuelingChecklist() {
+        return RefuelingEvaluator.checklist(new RefuelingEvaluator.Inputs(
+                operatingState.stage == ReactorOperatingStage.SHUTDOWN, allRodDrivesInserted(),
+                pointKineticsState.relativeNeutronPopulation, boronPpm, temperatureKelvin, pressureMPa,
+                subcriticalMinutes(), coolantMassKg, computeRatedCoolantMassKg()), refuelingLimits());
+    }
+
+    private double currentMultiplication() {
+        return RefuelingEvaluator.multiplication(totalReactivity, pointKineticsConstants != null);
+    }
+
+    /** Condition (8)'s clock: world time, so decay "continues" while this reactor is unformed or unloaded. */
+    private void updateSubcriticalClock() {
+        if (getWorld() == null) return;
+        if (subcriticalSinceWorldTick == UNKNOWN_SUBCRITICAL_SINCE) {
+            subcriticalSinceWorldTick = getWorld().getTotalWorldTime();
+            markDirty();
+        }
+        if (pointKineticsState.relativeNeutronPopulation >= ConfigHolder.reactor.shutdownCompletePowerThreshold) {
+            if (!everCritical) markDirty();
+            everCritical = true;
+            subcriticalSinceWorldTick = getWorld().getTotalWorldTime();
+        }
+    }
+
+    /** Per tick: rod drives held in, the automatic hold, and the console's checklist/mode display. */
+    private void updateRefueling() {
+        subcriticalMultiplication = currentMultiplication();
+        operatingMode = RefuelingEvaluator.operatingMode(operatingState.stage == ReactorOperatingStage.REFUELING,
+                totalReactivity, pointKineticsConstants != null, pointKineticsState.relativeNeutronPopulation,
+                temperatureKelvin);
+        Map<RefuelingEvaluator.Condition, RefuelingEvaluator.Status> checklist = refuelingChecklist();
+        boolean refueling = operatingState.stage == ReactorOperatingStage.REFUELING;
+        refuelChecklistLine = RefuelingEvaluator.summaryLine(checklist, refueling);
+        refuelDetailLine = refuelDetail(RefuelingEvaluator.firstUnmet(checklist, !refueling), refueling);
+
+        if (!refueling) return;
+        // Rod drives are disconnected: every port's drive is held fully inserted.
+        for (MetaTileEntityFuelAssemblyPort port : cachedAssemblyPorts) {
+            if (port.getInsertionDepth() < 1.0) port.setInsertionDepth(1.0);
+        }
+        if (refuelingHold) return;
+        RefuelingEvaluator.HoldReason reason = RefuelingEvaluator.holdReason(subcriticalMultiplication,
+                refuelingBaselineMultiplication, temperatureKelvin, coolantMassKg, computeRatedCoolantMassKg(),
+                boronPpm, refuelingLimits());
+        if (reason != null) {
+            refuelingHold = true;
+            refuelingHoldReason = reason;
+            writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+            markDirty();
+        }
+    }
+
+    @NotNull
+    private String refuelDetail(@Nullable RefuelingEvaluator.Condition unmet, boolean refueling) {
+        if (unmet == null) return refueling ? "" : "NEXT: READY";
+        RefuelingEvaluator.Limits limits = refuelingLimits();
+        return "NEXT: " + switch (unmet) {
+            case SHUTDOWN -> "STAGE " + operatingState.stage;
+            case RODS_INSERTED -> "RODS NOT FULLY INSERTED";
+            case SUBCRITICAL -> String.format("POWER %.4f/%.4f", pointKineticsState.relativeNeutronPopulation,
+                    limits.shutdownPowerLevel());
+            case BORON -> String.format("BORON %.0f/%.0f ppm", boronPpm, limits.minBoronPpm());
+            case SHUTDOWN_MARGIN -> "SHUTDOWN MARGIN";
+            case TEMPERATURE -> String.format("TEMP %.0f/%.0f K", temperatureKelvin, limits.maxTemperatureKelvin());
+            case PRESSURE -> String.format("PRESS %.2f/%.2f MPa", pressureMPa, limits.maxPressureMPa());
+            case WAIT_TIME -> String.format("WAIT %.0f/%.0f min", subcriticalMinutes(),
+                    limits.minSubcriticalMinutes());
+            case COOLANT -> String.format("COOLANT %.0f/%.0f mb", coolantMassKg * 1000.0,
+                    computeRatedCoolantMassKg() * 1000.0);
+        };
+    }
+
+    /**
+     * Console command: begin refueling (from SHUTDOWN, every condition (1)-(9) met) or end it (structure
+     * requirements met and the core at or below the shutdown level -- allowed even while on hold, decided
+     * 2026-11-27: leaving Mode 6 is the safe direction, and a hold that locks the ports could otherwise trap the
+     * operator).
+     */
+    public void requestToggleRefueling() {
+        if (operatingState.stage == ReactorOperatingStage.REFUELING) {
+            if (housingMismatch || lengthMismatch || pointKineticsState.relativeNeutronPopulation >
+                    ConfigHolder.reactor.shutdownCompletePowerThreshold) {
+                return;
+            }
+            refuelingHold = false;
+            refuelingHoldReason = null;
+            applyOperatingStateChange(ReactorOperatingEvaluator.endRefueling(operatingState));
+        } else {
+            if (!RefuelingEvaluator.canStart(refuelingChecklist())) return;
+            boronDilutionActive = false;
+            pressurizationActive = false;
+            refuelingHold = false;
+            refuelingHoldReason = null;
+            refuelingBaselineMultiplication = currentMultiplication();
+            applyOperatingStateChange(ReactorOperatingEvaluator.beginRefueling(operatingState));
+        }
+        writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+        markDirty();
+    }
+
+    /** Console command: lift a refueling hold once conditions (2)-(9) hold again; the count-rate baseline resets. */
+    public void requestResumeRefueling() {
+        if (operatingState.stage != ReactorOperatingStage.REFUELING || !refuelingHold) return;
+        if (!RefuelingEvaluator.canResume(refuelingChecklist())) return;
+        refuelingHold = false;
+        refuelingHoldReason = null;
+        refuelingBaselineMultiplication = currentMultiplication();
+        writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
+        markDirty();
+    }
 
     // ---------------------------------------------------------------- RCP and RHR (stage 1-4a, 2026-11-24)
 
@@ -2189,6 +2395,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         // only stop was reaching the target). Interim until stage 5's heater/spray + pressure controller.
         if (pressurizationActive) {
             pressurizationActive = false;
+        } else if (operatingState.stage == ReactorOperatingStage.REFUELING) {
+            return; // stage 1-4c: the vessel stays at atmospheric pressure during refueling
         } else if (pressureMPa < ConfigHolder.reactor.targetOperatingPressureMPa) {
             pressurizationActive = true;
             depressurizationActive = false;
@@ -2252,6 +2460,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
      * fixed setpoint.
      */
     public void requestToggleBoronDilution() {
+        // Stage 1-4c: no dilution source may be started during refueling.
+        if (!boronDilutionActive && operatingState.stage == ReactorOperatingStage.REFUELING) return;
         boronDilutionActive = !boronDilutionActive;
         if (boronDilutionActive) boronConcentrationActive = false;
         writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
@@ -2538,6 +2748,14 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         buf.writeBoolean(rhrOutletCapped);
         buf.writeBoolean(rhrNoPower);
         buf.writeBoolean(rhrNoCoolingWater);
+        buf.writeBoolean(refuelingHold);
+        buf.writeBoolean(refuelingHoldReason != null);
+        if (refuelingHoldReason != null) buf.writeEnumValue(refuelingHoldReason);
+        buf.writeDouble(subcriticalMultiplication);
+        buf.writeDouble(refuelingBaselineMultiplication);
+        buf.writeVarInt(operatingMode);
+        buf.writeString(refuelChecklistLine);
+        buf.writeString(refuelDetailLine);
         buf.writeDouble(pointKineticsState.relativeNeutronPopulation);
         buf.writeDouble(totalReactivity);
         buf.writeDouble(shapeReactivityPcm);
@@ -2602,6 +2820,13 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         rhrOutletCapped = buf.readBoolean();
         rhrNoPower = buf.readBoolean();
         rhrNoCoolingWater = buf.readBoolean();
+        refuelingHold = buf.readBoolean();
+        refuelingHoldReason = buf.readBoolean() ? buf.readEnumValue(RefuelingEvaluator.HoldReason.class) : null;
+        subcriticalMultiplication = buf.readDouble();
+        refuelingBaselineMultiplication = buf.readDouble();
+        operatingMode = buf.readVarInt();
+        refuelChecklistLine = buf.readString(256);
+        refuelDetailLine = buf.readString(256);
         // Display-only on the client: just enough of each state to back this class's own getters, not a full
         // reconstruction (the client never runs updatePhysicsAmplitude() itself, so precursor/iodine detail is
         // never needed here).
@@ -2685,6 +2910,11 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         data.setBoolean("RcpRunning", rcpRunning);
         data.setBoolean("RhrInService", rhrInService);
         data.setString("RhrNotice", rhrNotice.name());
+        data.setBoolean("RefuelingHold", refuelingHold);
+        if (refuelingHoldReason != null) data.setString("RefuelingHoldReason", refuelingHoldReason.name());
+        data.setDouble("RefuelingBaselineM", refuelingBaselineMultiplication);
+        data.setBoolean("EverCritical", everCritical);
+        data.setLong("SubcriticalSinceWorldTick", subcriticalSinceWorldTick);
         return data;
     }
 
@@ -2727,6 +2957,16 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         rcpRunning = !data.hasKey("RcpRunning") || data.getBoolean("RcpRunning");
         rhrInService = data.getBoolean("RhrInService");
         rhrNotice = data.hasKey("RhrNotice") ? RhrNotice.valueOf(data.getString("RhrNotice")) : RhrNotice.NONE;
+        refuelingHold = data.getBoolean("RefuelingHold");
+        refuelingHoldReason = data.hasKey("RefuelingHoldReason") ?
+                RefuelingEvaluator.HoldReason.valueOf(data.getString("RefuelingHoldReason")) : null;
+        refuelingBaselineMultiplication = data.hasKey("RefuelingBaselineM") ? data.getDouble("RefuelingBaselineM") :
+                1.0;
+        // Worlds saved before stage 1-4c: assume the core has operated and start the wait at the first tick after
+        // loading (the safe side) -- see updateSubcriticalClock().
+        everCritical = !data.hasKey("EverCritical") || data.getBoolean("EverCritical");
+        subcriticalSinceWorldTick = data.hasKey("SubcriticalSinceWorldTick") ?
+                data.getLong("SubcriticalSinceWorldTick") : UNKNOWN_SUBCRITICAL_SINCE;
     }
 
     public MetaTileEntityPressurizedWaterReactor(ResourceLocation metaTileEntityId) {
@@ -2784,6 +3024,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         updateCoreMapCells();
         updateControlRodSummaries();
         updateSyncedCoreSummary();
+        updateSubcriticalClock();
+        updateRefueling();
         updateAutoControl();
         checkAutomaticStageTransitions();
         checkScramConditions();

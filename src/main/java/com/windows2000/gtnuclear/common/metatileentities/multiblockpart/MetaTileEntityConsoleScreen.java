@@ -254,7 +254,7 @@ public class MetaTileEntityConsoleScreen extends MetaTileEntityMultiblockPart
         for (String line : lines) {
             int color = line.contains("MISMATCH") || line.startsWith("SCRAM") || line.startsWith("BREACH") ||
                     line.contains("WARNING") || line.contains("ISOLATED") || line.contains("REFUSED") ||
-                    line.contains("NO POWER") || line.contains("NO COOLING") ?
+                    line.contains("NO POWER") || line.contains("NO COOLING") || line.contains("HOLD") ?
                             COLOR_WARNING : COLOR_TEXT;
             renderTextOnPanel(aLeft + padding, b, color, line, textScale);
             b += 0.06f * textScale;
@@ -277,6 +277,21 @@ public class MetaTileEntityConsoleScreen extends MetaTileEntityMultiblockPart
         lines.add("ASSEMBLIES: " + reactor.getLoadedFuelAssemblyCount() + " fuel / " +
                 reactor.getLoadedControlRodClusterCount() + " rods");
         lines.add("STAGE: " + operatingState.stage);
+        lines.add("MODE: " + reactor.getOperatingMode() + " (" + modeName(reactor.getOperatingMode()) + ")");
+        // Stage 1-4c: the refueling checklist, as a two-line summary (decided 2026-11-27; the one-condition-per-line
+        // form is an idea kept for roadmap G's console redesign).
+        if (operatingState.stage == ReactorOperatingStage.SHUTDOWN ||
+                operatingState.stage == ReactorOperatingStage.REFUELING) {
+            lines.add(reactor.getRefuelChecklistLine());
+            if (!reactor.getRefuelDetailLine().isEmpty()) lines.add(reactor.getRefuelDetailLine());
+        }
+        if (reactor.isRefuelingHold() && reactor.getRefuelingHoldReason() != null) {
+            lines.add(String.format("REFUEL HOLD: %s (M %.2f -> %.2f)", reactor.getRefuelingHoldReason(),
+                    reactor.getRefuelingBaselineMultiplication(), reactor.getSubcriticalMultiplication()));
+        } else if (operatingState.stage == ReactorOperatingStage.REFUELING) {
+            lines.add(String.format("REFUELING: M %.2f (hold at %.2f)", reactor.getSubcriticalMultiplication(),
+                    2.0 * reactor.getRefuelingBaselineMultiplication()));
+        }
         if (operatingState.stage == ReactorOperatingStage.SHUTDOWN && reactor.getSyncedStartupBlocker() != null) {
             lines.add("STARTUP BLOCKED: " + reactor.getSyncedStartupBlocker());
         }
@@ -322,6 +337,20 @@ public class MetaTileEntityConsoleScreen extends MetaTileEntityMultiblockPart
                     String.format("%.0f", reactor.getSevereAccidentState().coreMeltFraction * 100.0) + "% !!");
         }
         return lines;
+    }
+
+    /** Real PWR Technical Specification mode names (stage 1-4c). */
+    @NotNull
+    private static String modeName(int mode) {
+        return switch (mode) {
+            case 1 -> "POWER OPERATION";
+            case 2 -> "STARTUP";
+            case 3 -> "HOT STANDBY";
+            case 4 -> "HOT SHUTDOWN";
+            case 5 -> "COLD SHUTDOWN";
+            case 6 -> "REFUELING";
+            default -> "?";
+        };
     }
 
     /** Stage 1-4a: residual heat removal status, heat removed and cooling water temperatures. */

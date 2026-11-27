@@ -1183,5 +1183,36 @@ public class ConfigHolder {
                 "Default: 8.3 (the real first-stage setpoint)" })
         @Config.RangeDouble(min = 0.0, max = 1.0E3)
         public double mainSteamSafetyValvePressureMPa = 8.3;
+
+        // ---------------------------------------------------------------- refueling, Mode 6 (stage 1-4c)
+
+        @Config.Comment({
+                "Refueling start condition (4) and hold limit: minimum primary boron concentration (ppm) " +
+                        "(2026-11-27, stage 1-4c). Until stage 2 it also stands in for condition (5), k_eff <= " +
+                        "0.95 with all rods withdrawn.",
+                "Default: 2000.0 (typical real PWR Mode 6 requirement)" })
+        @Config.RangeDouble(min = 0.0, max = 1.0E6)
+        public double refuelingMinBoronPpm = 2000.0;
+
+        @Config.Comment({
+                "Refueling start condition (6) and hold limit: maximum primary coolant temperature (K).",
+                "Default: 366.0 (200 F, the real Mode 5/6 boundary)" })
+        @Config.RangeDouble(min = 0.0, max = 1.0E4)
+        public double refuelingMaxTemperatureKelvin = 366.0;
+
+        @Config.Comment({
+                "Refueling start condition (8): minutes (world time) the core must have stayed below the shutdown " +
+                        "level since it last operated -- a decay heat stand-in until stage 2 replaces it with " +
+                        "decay heat <= ~0.3%. A core that has never operated skips it. Lower it to shorten tests.",
+                "Default: 115.0 (the real ~100 hours divided by this mod's 52.2x time compression)" })
+        @Config.RangeDouble(min = 0.0, max = 1.0E6)
+        public double refuelingMinSubcriticalMinutes = 115.0;
+
+        @Config.Comment({
+                "DEBUG: log every refused fuel assembly port slot operation (side, slot, item, lock and channel " +
+                        "context) to the game log with the [FAP-DEBUG] prefix. Off by default -- it logs on " +
+                        "every locked interaction, including automation.",
+                "Default: false" })
+        public boolean debugFuelAssemblyPortLogging = false;
     }
 }

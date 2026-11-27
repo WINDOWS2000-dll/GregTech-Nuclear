@@ -353,8 +353,8 @@ public class MetaTileEntityControlConsole extends MultiblockWithDisplayBase impl
     @Override
     protected MultiblockUIFactory createUIFactory() {
         return super.createUIFactory()
-                .setSize(198, 508)
-                .setScreenHeight(288)
+                .setSize(198, 526)
+                .setScreenHeight(306)
                 .addScreenChildren(this::addCommandButtons);
     }
 
@@ -439,6 +439,17 @@ public class MetaTileEntityControlConsole extends MultiblockWithDisplayBase impl
             if (reactor != null) reactor.requestToggleRhr();
         }, "gtnuclear.gui.control_console.rhr").pos(98, 202).size(90, 16));
 
+        // Stage 1-4c (2026-11-27): refueling (Mode 6) start/end toggle and hold resume.
+        parent.child(commandButton("refuel_trigger", syncManager, () -> {
+            MetaTileEntityPressurizedWaterReactor reactor = getLinkedReactor();
+            if (reactor != null) reactor.requestToggleRefueling();
+        }, "gtnuclear.gui.control_console.refuel").pos(4, 220).size(90, 16));
+
+        parent.child(commandButton("refuel_resume_trigger", syncManager, () -> {
+            MetaTileEntityPressurizedWaterReactor reactor = getLinkedReactor();
+            if (reactor != null) reactor.requestResumeRefueling();
+        }, "gtnuclear.gui.control_console.refuel_resume").pos(98, 220).size(90, 16));
+
         addBankNudgeButtons(parent, syncManager);
         addControlRodList(parent, syncManager);
     }
@@ -464,7 +475,7 @@ public class MetaTileEntityControlConsole extends MultiblockWithDisplayBase impl
         int buttonWidth = 29;
         int gap = 2;
         for (int bankId = 0; bankId <= MetaTileEntityFuelAssemblyPort.BANK_COUNT; bankId++) {
-            int y = 226 + bankId * 18;
+            int y = 244 + bankId * 18;
             int finalBankId = bankId;
             int x = 4;
 
@@ -501,7 +512,7 @@ public class MetaTileEntityControlConsole extends MultiblockWithDisplayBase impl
         List<MetaTileEntityPressurizedWaterReactor.ControlRodSummary> summaries = reactor != null ?
                 reactor.getControlRodSummaries() : Collections.emptyList();
         parent.child(new ControlRodListWidget(summaries, syncManager, this::cycleControlRodBank)
-                .pos(4, 320).size(182, 70));
+                .pos(4, 338).size(182, 70));
     }
 
     /** Server-side target of the list's row clicks -- see {@link ControlRodListWidget}'s own JavaDoc. */

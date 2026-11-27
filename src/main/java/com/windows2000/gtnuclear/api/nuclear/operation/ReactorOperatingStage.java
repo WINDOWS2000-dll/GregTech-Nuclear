@@ -8,7 +8,7 @@ package com.windows2000.gtnuclear.api.nuclear.operation;
  * {@link #OPERATING} begins -- no separate discrete state is needed for that.
  */
 public enum ReactorOperatingStage {
-    /** Fully shut down; maintenance (fuel/control-rod item swaps) is only allowed in this stage. */
+    /** Fully shut down. Fuel handling needs {@link #REFUELING} since stage 1-4c (2026-11-27). */
     SHUTDOWN,
     /** Coolant/pressure/temperature/boron are being brought up and rods withdrawn; not yet self-sustaining. */
     STARTUP,
@@ -17,5 +17,12 @@ public enum ReactorOperatingStage {
     /** A planned shutdown is in progress (rods being inserted, boron being concentrated, depressurizing/cooling). */
     SHUTTING_DOWN,
     /** SCRAM has fired; all rods inserted. Only a manual console reset can leave this stage. */
-    TRIPPED
+    TRIPPED,
+    /**
+     * Mode 6 (stage 1-4c, 2026-11-27): entered from SHUTDOWN once every refueling start condition holds (see
+     * {@link RefuelingEvaluator}); the only stage in which fuel assembly ports open. Rod drives are disconnected
+     * (held fully inserted) and startup, boron dilution and pressurization are refused. Not a running stage: SCRAM
+     * triggers and structure breaches do not trip it.
+     */
+    REFUELING
 }

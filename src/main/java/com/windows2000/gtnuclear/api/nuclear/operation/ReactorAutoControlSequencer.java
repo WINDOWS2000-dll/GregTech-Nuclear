@@ -177,6 +177,10 @@ public final class ReactorAutoControlSequencer {
         if (host.getOperatingState().stage == ReactorOperatingStage.TRIPPED) {
             return "tripped";
         }
+        // Stage 1-4c: rod drives are disconnected during refueling.
+        if (host.getOperatingState().stage == ReactorOperatingStage.REFUELING) {
+            return "refueling";
+        }
         return updateAutoRodControlAscensionOrHold(host);
     }
 

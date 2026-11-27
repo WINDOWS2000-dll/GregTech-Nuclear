@@ -49,6 +49,20 @@ public final class ReactorOperatingEvaluator {
      * Automatic: the caller determined the planned shutdown has finished (power negligible, rods fully
      * inserted). Only valid from {@code SHUTTING_DOWN}.
      */
+    /** SHUTDOWN -> REFUELING (stage 1-4c); the caller checks the start conditions first. */
+    @NotNull
+    public static ReactorOperatingState beginRefueling(@NotNull ReactorOperatingState previous) {
+        return previous.stage == ReactorOperatingStage.SHUTDOWN ?
+                new ReactorOperatingState(ReactorOperatingStage.REFUELING, null) : previous;
+    }
+
+    /** REFUELING -> SHUTDOWN (stage 1-4c); the caller checks the end conditions first. */
+    @NotNull
+    public static ReactorOperatingState endRefueling(@NotNull ReactorOperatingState previous) {
+        return previous.stage == ReactorOperatingStage.REFUELING ?
+                new ReactorOperatingState(ReactorOperatingStage.SHUTDOWN, null) : previous;
+    }
+
     @NotNull
     public static ReactorOperatingState shutdownComplete(@NotNull ReactorOperatingState previous) {
         return previous.stage == ReactorOperatingStage.SHUTTING_DOWN ?
@@ -63,7 +77,9 @@ public final class ReactorOperatingEvaluator {
      */
     @NotNull
     public static ReactorOperatingState scram(@NotNull ReactorOperatingState previous, @NotNull ScramReason reason) {
-        if (previous.stage == ReactorOperatingStage.SHUTDOWN || previous.stage == ReactorOperatingStage.TRIPPED) {
+        // REFUELING (stage 1-4c) is as safe as SHUTDOWN for this purpose: rods are held fully inserted.
+        if (previous.stage == ReactorOperatingStage.SHUTDOWN || previous.stage == ReactorOperatingStage.TRIPPED ||
+                previous.stage == ReactorOperatingStage.REFUELING) {
             return previous;
         }
         return new ReactorOperatingState(ReactorOperatingStage.TRIPPED, reason);

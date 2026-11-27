@@ -468,8 +468,9 @@ public class MetaTileEntityControlConsole extends MultiblockWithDisplayBase impl
      * original 1% pair, to make manual criticality approach/fine-tuning practical without needing dozens of
      * clicks -- see {@link #NUDGE_STEP_FRACTIONS}.
      */
-    private static final double[] NUDGE_STEP_FRACTIONS = { 0.05, 0.01, 0.001 };
-    private static final String[] NUDGE_STEP_LABELS = { "5%", "1%", ".1%" };
+    // Scaled down 5x on 2026-11-27 (stage 2-2, decision B) -- see ReactorAutoControlSequencer#LARGE_STEP.
+    private static final double[] NUDGE_STEP_FRACTIONS = { 0.01, 0.002, 0.0005 };
+    private static final String[] NUDGE_STEP_LABELS = { "1%", ".2%", ".05%" };
 
     private void addBankNudgeButtons(@NotNull ParentWidget<?> parent, @NotNull PanelSyncManager syncManager) {
         int buttonWidth = 29;

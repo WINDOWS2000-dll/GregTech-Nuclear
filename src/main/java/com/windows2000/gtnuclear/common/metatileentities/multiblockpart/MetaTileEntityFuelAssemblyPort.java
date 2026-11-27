@@ -34,7 +34,9 @@ import com.cleanroommc.modularui.widgets.ProgressWidget;
 import com.cleanroommc.modularui.widgets.TextWidget;
 import com.cleanroommc.modularui.widgets.slot.ItemSlot;
 import com.windows2000.gtnuclear.api.metatileentity.multiblock.GTNLMultiblockAbility;
+import com.windows2000.gtnuclear.api.nuclear.fuel.FuelAssemblyState;
 import com.windows2000.gtnuclear.api.nuclear.fuel.FuelComposition;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.XenonIodineState;
 import com.windows2000.gtnuclear.common.ConfigHolder;
 import com.windows2000.gtnuclear.common.item.AssemblyLength;
 import com.windows2000.gtnuclear.common.item.GTNLItems;
@@ -156,25 +158,120 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
         return getInsertStack().isEmpty() ? 0 : AssemblyLength.get(getInsertStack());
     }
 
+    // ---------------------------------------------------------------- in-memory fuel state (stage 2-3a)
+
     /**
-     * The loaded fuel assembly's live (layer-averaged) composition, derived from its own NBT state rather than
-     * its fixed enrichment tier -- so performance reflects however much that specific assembly has burned.
+     * The loaded assembly's state, kept in memory while it sits here (2026-11-28, stage 2-3a, see this mod's design
+     * memory). Before this the reactor parsed the item's NBT ~9 times and rewrote it twice per assembly per tick
+     * (0.27 ms/tick for 101 assemblies, 4.8 ms for 665, and ~17 ms once decay heat groups join); now it reads the
+     * item once when the assembly arrives and writes it back only on {@link #flushFuelState()}: every shape
+     * recompute (5 s), before any extraction, when this port saves, and when it is broken. A crash loses at most
+     * those 5 seconds of burnup.
+     */
+    @Nullable
+    private FuelAssemblyState cachedFuelState;
+    /** The stack {@link #cachedFuelState} belongs to (identity) -- a different stack means reload. */
+    @Nullable
+    private ItemStack cachedFuelStack;
+    private boolean cachedFuelStateDirty;
+    /**
+     * Whether the item carried a written state when it arrived: a never-irradiated item has no poisons yet, and its
+     * xenon reads as the reactor-wide fallback (same contract as {@code ItemFuelRod#getLocalXenonIodineState}).
+     */
+    private boolean cachedPoisonsInitialized;
+
+    /** The loaded assembly's state (loaded on first use), or {@code null} without a valid fuel assembly. */
+    @Nullable
+    public FuelAssemblyState getFuelState() {
+        ItemStack stack = getFuelStack();
+        if (!(stack.getItem() instanceof ItemFuelRod fuelRod) || AssemblyLength.get(stack) <= 0) {
+            cachedFuelState = null;
+            cachedFuelStack = null;
+            return null;
+        }
+        if (cachedFuelStack != stack || cachedFuelState == null) {
+            cachedFuelState = fuelRod.getState(stack);
+            cachedFuelStack = stack;
+            cachedFuelStateDirty = false;
+            NBTTagCompound tag = stack.getTagCompound();
+            cachedPoisonsInitialized = tag != null && tag.hasKey("Composition");
+        }
+        return cachedFuelState;
+    }
+
+    /** Writes the in-memory state back into the item, if it changed. Cheap when nothing changed. */
+    public void flushFuelState() {
+        if (!cachedFuelStateDirty || cachedFuelState == null || cachedFuelStack == null) return;
+        ItemStack stack = getFuelStack();
+        if (stack != cachedFuelStack || !(stack.getItem() instanceof ItemFuelRod fuelRod)) return;
+        fuelRod.setState(stack, cachedFuelState);
+        cachedFuelStateDirty = false;
+        markDirty();
+    }
+
+    private void markFuelStateDirty() {
+        cachedFuelStateDirty = true;
+    }
+
+    /**
+     * The loaded fuel assembly's live (layer-averaged) composition, from its own state rather than its fixed
+     * enrichment tier -- so performance reflects however much that specific assembly has burned.
      */
     @Nullable
     public FuelComposition getLoadedComposition() {
-        ItemStack stack = getFuelStack();
-        if (!(stack.getItem() instanceof ItemFuelRod fuelRod) || AssemblyLength.get(stack) <= 0) return null;
-        Map<Element, Double> amounts = fuelRod.getIsotopeAmounts(stack);
+        FuelAssemblyState state = getFuelState();
+        if (state == null) return null;
+        ItemFuelRod fuelRod = (ItemFuelRod) getFuelStack().getItem();
+        Map<Element, Double> amounts = fuelRod.isotopeAmounts(state);
         if (amounts.isEmpty()) return null;
         return new FuelComposition(fuelRod.initialComposition.id, amounts);
     }
 
-    /** Persists the burnup engine's new composition into the loaded assembly (no-op without fuel). */
+    /** The loaded assembly's layer-averaged amounts ({@code n_k}), empty without fuel. */
+    @NotNull
+    public Map<Element, Double> getLoadedIsotopeAmounts() {
+        FuelAssemblyState state = getFuelState();
+        if (state == null) return Collections.emptyMap();
+        return ((ItemFuelRod) getFuelStack().getItem()).isotopeAmounts(state);
+    }
+
+    /** Stores the burnup engine's new composition (in memory; no-op without fuel). */
     public void setLoadedIsotopeAmounts(@NotNull Map<Element, Double> amounts) {
-        ItemStack stack = getFuelStack();
-        if (!(stack.getItem() instanceof ItemFuelRod fuelRod)) return;
-        fuelRod.setIsotopeAmounts(stack, amounts);
-        writeInternally(FuelAssemblySlotRules.SLOT_FUEL, stack);
+        FuelAssemblyState state = getFuelState();
+        if (state == null) return;
+        ItemFuelRod.applyIsotopeAmounts(state, amounts);
+        markFuelStateDirty();
+    }
+
+    /** Layer-averaged xenon/iodine, or {@code fallback} for an assembly whose poisons were never written. */
+    @NotNull
+    public XenonIodineState getXenonIodineState(@NotNull XenonIodineState fallback) {
+        FuelAssemblyState state = getFuelState();
+        if (state == null || !cachedPoisonsInitialized) return fallback;
+        return ItemFuelRod.xenonIodineState(state);
+    }
+
+    public void setXenonIodineState(@NotNull XenonIodineState xenonState) {
+        FuelAssemblyState state = getFuelState();
+        if (state == null) return;
+        ItemFuelRod.applyXenonIodineState(state, xenonState);
+        cachedPoisonsInitialized = true;
+        markFuelStateDirty();
+    }
+
+    /** {@code ItemFuelRod#getFissileCapabilityFraction} of the in-memory state (0 without fuel). */
+    public double getFissileCapabilityFraction() {
+        FuelAssemblyState state = getFuelState();
+        if (state == null) return 0.0;
+        return ((ItemFuelRod) getFuelStack().getItem()).fissileCapabilityFraction(state);
+    }
+
+    /** Every tracked nuclide's mass in grams, by symbol (empty without fuel). */
+    @NotNull
+    public Map<String, Double> getIsotopeMassesGrams() {
+        FuelAssemblyState state = getFuelState();
+        if (state == null) return Collections.emptyMap();
+        return ((ItemFuelRod) getFuelStack().getItem()).isotopeMassesGrams(state);
     }
 
     /** Fully-inserted worth of the loaded control rod cluster (stage-4 interim), 0 without one. */
@@ -351,6 +448,10 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
         @NotNull
         @Override
         public ItemStack extractItem(int slot, int amount, boolean simulate) {
+            // Stage 2-3a: write the in-memory state into the item before it can leave. Done even for a simulated
+            // extraction -- ModularUI's take path asks canTakeStack (a simulated extract) and then moves the item
+            // with splitStack/putStack without extracting again.
+            if (slot == FuelAssemblySlotRules.SLOT_FUEL) flushFuelState();
             if (enforceRules() && !canExtract(slot)) {
                 debugDenied(simulate ? "extractItem(simulate)" : "extractItem", slot, getStackInSlot(slot));
                 return ItemStack.EMPTY;
@@ -368,6 +469,7 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
          */
         @Override
         public void setStackInSlot(int slot, @NotNull ItemStack stack) {
+            if (slot == FuelAssemblySlotRules.SLOT_FUEL) flushFuelState();
             ItemStack current = getStackInSlot(slot);
             if (enforceRules()) {
                 boolean removing = !current.isEmpty();
@@ -406,6 +508,7 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
 
     @Override
     public NBTTagCompound writeToNBT(NBTTagCompound data) {
+        flushFuelState();
         super.writeToNBT(data);
         data.setTag("Inventory", inventory.serializeNBT());
         data.setDouble("InsertionDepth", insertionDepth);
@@ -417,8 +520,22 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
     public void readFromNBT(NBTTagCompound data) {
         super.readFromNBT(data);
         inventory.deserializeNBT(data.getCompoundTag("Inventory"));
+        cachedFuelState = null;
+        cachedFuelStack = null;
         if (data.hasKey("InsertionDepth")) insertionDepth = data.getDouble("InsertionDepth");
         bankId = data.getInteger("BankId");
+    }
+
+    /**
+     * Drops both slots when the port is broken (2026-11-28) -- GT only drops a machine's own importItems/exportItems,
+     * so before this a broken port silently destroyed its fuel assembly and rod cluster. The in-memory fuel state is
+     * written into the item first.
+     */
+    @Override
+    public void clearMachineInventory(@NotNull List<@NotNull ItemStack> itemBuffer) {
+        flushFuelState();
+        super.clearMachineInventory(itemBuffer);
+        clearInventory(itemBuffer, inventory);
     }
 
     // ---------------------------------------------------------------- provisional UI (stage 1-3 (d))
@@ -482,7 +599,7 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
     private String isotopeText(@Nullable Element element) {
         ItemStack stack = getFuelStack();
         if (element == null || !(stack.getItem() instanceof ItemFuelRod fuelRod)) return "";
-        return FuelAssemblyPortText.kilograms(fuelRod.isotopeMassKg(stack, element));
+        return FuelAssemblyPortText.kilograms(getIsotopeMassesGrams().getOrDefault(element.symbol, 0.0) / 1000.0);
     }
 
     @NotNull
@@ -509,7 +626,7 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
                 FuelAssemblyPortText.length(getFuelLength()) : ""));
         StringSyncValue fuelRemaining = new StringSyncValue(() -> serverString(() -> getFuelStack()
                 .getItem() instanceof ItemFuelRod fuelRod ?
-                        FuelAssemblyPortText.percent(fuelRod.getFissileCapabilityFraction(getFuelStack())) : ""));
+                        FuelAssemblyPortText.percent(getFissileCapabilityFraction()) : ""));
         StringSyncValue u235 = new StringSyncValue(() -> serverString(() -> isotopeText(Elements.U235)));
         StringSyncValue u238 = new StringSyncValue(() -> serverString(() -> isotopeText(Elements.U238)));
         StringSyncValue pu239 = new StringSyncValue(() -> serverString(() -> isotopeText(Elements.Pu239)));

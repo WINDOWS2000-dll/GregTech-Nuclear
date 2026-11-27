@@ -47,9 +47,22 @@ public final class PointKineticsSolver {
 
     private PointKineticsSolver() {}
 
+    /** As {@link #advance(PointKineticsState, double, double, PointKineticsConstants, double)} with no source. */
     @NotNull
     public static PointKineticsState advance(@NotNull PointKineticsState state, double reactivity, double dtSeconds,
                                              @NotNull PointKineticsConstants constants) {
+        return advance(state, reactivity, dtSeconds, constants, 0.0);
+    }
+
+    /**
+     * @param sourceRate external neutron source in relative units per second ({@code dn/dt += S}, stage 2-1 of this
+     *                   mod's reactor physics rework, see {@link NeutronSourceStrength}): it keeps a subcritical core
+     *                   at {@code n = S * Lambda / -rho} instead of decaying toward zero, which is both the physical
+     *                   source-range count rate and what lets a reactor start from a true-zero population.
+     */
+    @NotNull
+    public static PointKineticsState advance(@NotNull PointKineticsState state, double reactivity, double dtSeconds,
+                                             @NotNull PointKineticsConstants constants, double sourceRate) {
         double growthRate = (reactivity - constants.totalDelayedNeutronFraction) / constants.promptNeutronLifetime;
         int subSteps = 1;
         if (growthRate > 0) {
@@ -60,14 +73,15 @@ public final class PointKineticsSolver {
 
         PointKineticsState result = state;
         for (int i = 0; i < subSteps; i++) {
-            result = advanceStep(result, reactivity, subDtSeconds, constants);
+            result = advanceStep(result, reactivity, subDtSeconds, constants, sourceRate);
         }
         return result;
     }
 
     @NotNull
     private static PointKineticsState advanceStep(@NotNull PointKineticsState state, double reactivity,
-                                                  double dtSeconds, @NotNull PointKineticsConstants constants) {
+                                                  double dtSeconds, @NotNull PointKineticsConstants constants,
+                                                  double sourceRate) {
         int groups = constants.groupCount();
         double lifetime = constants.promptNeutronLifetime;
         double beta = constants.totalDelayedNeutronFraction;
@@ -88,7 +102,9 @@ public final class PointKineticsSolver {
 
         double coefficient = 1 - dtSeconds * (reactivity - beta) / lifetime -
                 dtSeconds * dtSeconds * precursorFeedbackCoefficient;
-        double newPopulation = (state.relativeNeutronPopulation + dtSeconds * precursorCarryoverTerm) / coefficient;
+        // The source enters the population's implicit update as a constant term (dt * S on the right-hand side).
+        double newPopulation = (state.relativeNeutronPopulation + dtSeconds * precursorCarryoverTerm +
+                dtSeconds * Math.max(0.0, sourceRate)) / coefficient;
 
         double[] newPrecursors = new double[groups];
         for (int i = 0; i < groups; i++) {

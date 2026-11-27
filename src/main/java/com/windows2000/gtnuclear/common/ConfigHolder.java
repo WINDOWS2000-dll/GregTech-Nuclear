@@ -342,24 +342,24 @@ public class ConfigHolder {
         public double neutronSourceCompressedHalfLifeDays = 3.0;
 
         @Config.Comment({
-                "Initial Californium-252 amount (an abstract unit, nominally grams) a freshly-crafted neutron " +
-                        "source rod item holds -- see com.windows2000.gtnuclear.common.item.ItemNeutronSourceRod." })
+                "Cf-252 in a freshly made startup neutron source rod, in MILLIGRAMS (the rod itself stores grams). " +
+                        "Since stage 2-1 (2026-11-27) the source strength is physical: 1 mg of Cf-252 emits " +
+                        "~2.3E9 neutrons/s (real half-life 2.645 y, 3.09% spontaneous fission, 3.77 neutrons " +
+                        "each). Renamed from neutronSourceInitialCf252Grams so old config files do not carry " +
+                        "the previous 1 g default over.",
+                "Default: 1.0 (1 mg, close to a real PWR primary startup source of ~1E8-1E9 n/s; 1 g would be " +
+                        "~1000x stronger and drown out the fuel's own spontaneous fission source)." })
         @Config.RangeDouble(min = 0.0, max = 1.0E6)
-        public double neutronSourceInitialCf252Grams = 1.0;
+        public double neutronSourceInitialCf252Milligrams = 1.0;
 
         @Config.Comment({
-                "Gameplay-balance coefficient converting the neutron source hatch's current Cf-252 spontaneous- " +
-                        "fission rate into the relative neutron population point kinetics is seeded with the " +
-                        "first time fuel becomes available (replacing this mod's earlier unconditional placeholder " +
-                        "seed -- see MetaTileEntityPressurizedWaterReactor's own JavaDoc) -- not a physical unit " +
-                        "conversion, since the underlying 'amount'/reaction-rate units are themselves already " +
-                        "abstracted (see fuelBurnupRateCoefficient's own comment for the same reasoning applied " +
-                        "to fuel burnup).",
-                "Default: 12.0, chosen so a brand-new 1-gram source (neutronSourceInitialCf252Grams's default) " +
-                        "seeds a population of roughly 1.0E-6 -- matching the magnitude of the placeholder seed " +
-                        "this replaces, for continuity -- decaying from there as the source depletes." })
+                "DEBUG/VERIFICATION multiplier on the external neutron source term (startup source + fuel " +
+                        "spontaneous fission) of point kinetics (stage 2-1). The strength itself is physical " +
+                        "(see com.windows2000.gtnuclear.api.nuclear.neutronics.NeutronSourceStrength); 1.0 keeps " +
+                        "it so. Replaces neutronSourceStrengthCoefficient, which converted the old one-off seed.",
+                "Default: 1.0" })
         @Config.RangeDouble(min = 0.0, max = 1.0E12)
-        public double neutronSourceStrengthCoefficient = 12.0;
+        public double neutronSourceStrengthMultiplier = 1.0;
 
         @Config.Comment({
                 "Relative neutron population below which a planned shutdown (SHUTTING_DOWN stage) is considered " +
@@ -813,25 +813,28 @@ public class ConfigHolder {
         public double autoControlHoldMarginFraction = 0.1;
 
         @Config.Comment({
-                "Added 2026-09-30 (real-playtest-driven, see this mod's design memory): hard ceiling on the " +
-                        "reactivity target ReactorAutoControlSequencer#computeAutoRodControlTargetPcm " +
-                        "derives from autoControlAscensionMarginFraction/autoControlHoldMarginFraction -- that " +
-                        "formula has no awareness of the delayed neutron fraction beta (roughly 1300-1400 pcm for " +
-                        "this mod's uranium fuel cycle) on its own, and will happily demand a target approaching " +
-                        "or past it as long as bank 0 still has withdrawal margin left. A real playtest confirmed " +
-                        "the consequence directly: right after shapeReactivityPcm's own 2026-09-29 recalibration " +
-                        "(6963 -> 11866 pcm) gave bank 0 far more withdrawal margin, reactivity reached just over " +
-                        "1000 pcm while insertion was still around 9-10% (nowhere near the 0% floor the margin-" +
-                        "based formula was designed to protect), and relative power went from under 1% to over " +
-                        "110% in about ten seconds -- close enough to beta for the reactor period to collapse " +
-                        "faster than this loop's own 1-second control interval could react. This cap keeps the " +
-                        "computed target from ever reaching that regime, regardless of how much rod margin " +
-                        "remains.",
-                "Default: 300.0, reusing the exact value the flat autoControlAscensionReactivityTargetPcm this " +
-                        "formula replaced used safely for the entire session before 2026-09-29 -- comfortably " +
-                        "under beta with margin to spare, pending further playtesting." })
+                "Ceiling (in dollars, rho/beta) on the auto control's rod reactivity target (2026-11-28, replacing " +
+                        "autoControlMaxTargetReactivityPcm = 300 pcm, which was 0.22 $ with the old mole-fraction " +
+                        "beta but 0.46 $ -- a ~7 s period -- once stage 2-2 corrected beta to ~0.0065). Expressed " +
+                        "in dollars so it keeps its meaning whatever the fuel's beta is.",
+                "Default: 0.15 (~100 pcm for fresh LEU)" })
+        @Config.RangeDouble(min = 0.0, max = 1.0)
+        public double autoControlMaxTargetReactivityDollars = 0.15;
+
+        @Config.Comment({
+                "Startup-rate limiter (2026-11-28): while the measured reactor period is positive and shorter than " +
+                        "this (s), the auto control withdraws no rods and stops boron dilution -- an operator " +
+                        "keeping the startup rate within limits on the period meter.",
+                "Default: 60.0" })
         @Config.RangeDouble(min = 0.0, max = 1.0E6)
-        public double autoControlMaxTargetReactivityPcm = 300.0;
+        public double autoControlMinWithdrawalPeriodSeconds = 60.0;
+
+        @Config.Comment({
+                "Startup-rate limiter (2026-11-28): while the measured reactor period is positive and shorter than " +
+                        "this (s), the auto control inserts rods regardless of its reactivity target.",
+                "Default: 20.0" })
+        @Config.RangeDouble(min = 0.0, max = 1.0E6)
+        public double autoControlInsertPeriodSeconds = 20.0;
 
         @Config.Comment({
                 "Added 2026-09-27 (real-playtest-driven, see this mod's design memory): relative power (0-1, " +

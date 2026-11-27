@@ -54,6 +54,7 @@ import com.windows2000.gtnuclear.api.nuclear.neutronics.CMFDSolver;
 import com.windows2000.gtnuclear.api.nuclear.neutronics.ControlRodWorth;
 import com.windows2000.gtnuclear.api.nuclear.neutronics.FluxWeightedAverage;
 import com.windows2000.gtnuclear.api.nuclear.neutronics.ModeratorTemperatureReactivity;
+import com.windows2000.gtnuclear.api.nuclear.neutronics.NeutronSourceStrength;
 import com.windows2000.gtnuclear.api.nuclear.neutronics.NodePosition;
 import com.windows2000.gtnuclear.api.nuclear.neutronics.PointKineticsConstants;
 import com.windows2000.gtnuclear.api.nuclear.neutronics.PointKineticsSolver;
@@ -163,7 +164,7 @@ import java.util.Map;
  * (transmitter role) -- this reactor will not do anything meaningful without a control console linked through it
  * (see this mod's design memory). The startup neutron source hatch ('N') is wired up too, via
  * {@link com.windows2000.gtnuclear.common.metatileentities.multiblockpart.MetaTileEntityNeutronSourceHatch}
- * -- see {@link #updatePhysicsShape()}/{@link #computeNeutronSourceSeed()} for how its loaded
+ * -- see {@link #updatePhysicsShape()}/{@link #computeSourceNeutronsPerSecond()} for how its loaded
  * {@link com.windows2000.gtnuclear.common.item.ItemNeutronSourceRod} is what actually lets the reactor start from
  * a true-zero neutron population, replacing this class's earlier unconditional placeholder seed.
  * <p>
@@ -376,9 +377,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
             }
             CellKind kind = port.hasFuel() ? CellKind.FUEL : CellKind.EMPTY_PORT;
             byte depletion = 0;
-            if (port.getFuelStack().getItem() instanceof ItemFuelRod fuelRod) {
-                depletion = (byte) Math.round(100.0 *
-                        (1.0 - fuelRod.getFissileCapabilityFraction(port.getFuelStack())));
+            if (port.hasFuel()) {
+                depletion = (byte) Math.round(100.0 * (1.0 - port.getFissileCapabilityFraction()));
             }
             byte rod = port.hasControlRod() ? (byte) Math.round(100.0 * port.getInsertionDepth()) : NO_ROD;
             cells.add(new CoreMapCell(dx, dz, kind, depletion, rod));
@@ -501,7 +501,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         double temperatureSensitivity = fuelCoolantUA > 0 ? computeRatedThermalPowerWatts() / fuelCoolantUA : 0.0;
         double localFuelTemperature = fuelTemperatureKelvin +
                 temperatureSensitivity * (localRelativePower - globalRelativePower);
-        double xenonPcm = -fuelRod.getLocalXenonIodineState(stack, xenonIodineState).xenonConcentration() * 1.0e5;
+        double xenonPcm = -port.getXenonIodineState(xenonIodineState).xenonConcentration() * 1.0e5;
         return new PortTelemetry(localRelativePower, xenonPcm, localFuelTemperature);
     }
 
@@ -614,8 +614,13 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     private boolean refuelingHold = false;
     @Nullable
     private RefuelingEvaluator.HoldReason refuelingHoldReason = null;
-    /** Subcritical multiplication at refueling start / last resume -- the count-rate-doubling reference. */
+    /** Subcritical multiplication at refueling start / last resume -- fallback count-rate-doubling reference. */
     private double refuelingBaselineMultiplication = 1.0;
+    /**
+     * Neutron population (the source-range count rate) at refueling start / last resume -- the count-rate-doubling
+     * reference since stage 2-1 gave subcritical cores a real source-driven population.
+     */
+    private double refuelingBaselinePopulation = 0.0;
     /** Whether this reactor has ever been above the shutdown level (fresh cores skip the decay wait). */
     private boolean everCritical = false;
     /** World time (ticks) when the reactor was last at or above the shutdown level -- see condition (8). */
@@ -661,6 +666,10 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
 
     public double getRefuelingBaselineMultiplication() {
         return refuelingBaselineMultiplication;
+    }
+
+    public double getRefuelingBaselinePopulation() {
+        return refuelingBaselinePopulation;
     }
 
     public int getOperatingMode() {
@@ -741,7 +750,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
             if (port.getInsertionDepth() < 1.0) port.setInsertionDepth(1.0);
         }
         if (refuelingHold) return;
-        RefuelingEvaluator.HoldReason reason = RefuelingEvaluator.holdReason(subcriticalMultiplication,
+        RefuelingEvaluator.HoldReason reason = RefuelingEvaluator.holdReason(
+                pointKineticsState.relativeNeutronPopulation, refuelingBaselinePopulation, subcriticalMultiplication,
                 refuelingBaselineMultiplication, temperatureKelvin, coolantMassKg, computeRatedCoolantMassKg(),
                 boronPpm, refuelingLimits());
         if (reason != null) {
@@ -794,6 +804,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
             refuelingHold = false;
             refuelingHoldReason = null;
             refuelingBaselineMultiplication = currentMultiplication();
+            refuelingBaselinePopulation = pointKineticsState.relativeNeutronPopulation;
             applyOperatingStateChange(ReactorOperatingEvaluator.beginRefueling(operatingState));
         }
         writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
@@ -807,6 +818,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         refuelingHold = false;
         refuelingHoldReason = null;
         refuelingBaselineMultiplication = currentMultiplication();
+        refuelingBaselinePopulation = pointKineticsState.relativeNeutronPopulation;
         writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
         markDirty();
     }
@@ -1339,13 +1351,14 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
 
     /**
      * Experimental (2026-09-28, diagnostic-only, see this mod's design memory): exposes
-     * {@link #computeNeutronSourceSeed()}'s raw value and whether {@link #pointKineticsConstants}/
+     * the source term's relative rate and whether {@link #pointKineticsConstants}/
      * {@link #cmfdResult} are currently non-null, for {@link ReactorTelemetryLogger} to log directly -- narrows
      * down why {@link #pointKineticsState}'s own population has stayed at exactly 0 despite a real playtest
      * confirming a fresh (99.66%-remaining) neutron source rod is loaded and reactivity is comfortably positive.
      */
     public double getNeutronSourceSeedForDebug() {
-        return computeNeutronSourceSeed();
+        // Since stage 2-1 this is the source term's relative rate (per second), not a one-off seed.
+        return neutronSourceRate;
     }
 
     /** See {@link #getNeutronSourceSeedForDebug()}'s own JavaDoc. */
@@ -1461,17 +1474,12 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     /**
      * The "shape" half of the quasi-static method: rebuilds {@link #cmfdResult} and
      * {@link #pointKineticsConstants} from the reactor's currently-loaded fuel every
-     * {@link #PHYSICS_SHAPE_RECOMPUTE_INTERVAL_TICKS} ticks. Whenever the neutron population is still at (or has
-     * decayed back down to) zero, a freshly-available fuel composition seeds a non-zero population from the
-     * loaded neutron source hatch's current strength (see {@link #computeNeutronSourceSeed()}) -- without this, a
-     * point kinetics system started from exact zero population and zero precursors stays at exactly zero forever
-     * regardless of reactivity, but a reactor with no source loaded (or a fully-spent one) genuinely cannot
-     * start, matching reality. Re-checked every recompute interval (not just once) rather than gated on an
-     * array-length mismatch: gating on length alone meant a reactor whose fuel became valid before its neutron
-     * source rod was inserted would have its (length-0) state zero-padded by {@link #updatePhysicsAmplitude()}'s
-     * own guard on the very same tick, permanently satisfying the length check and never re-attempting the seed
-     * even after a valid source was later loaded (confirmed via a real playtest, 2026-09-22: reactivity
-     * +26795 pcm, all rods withdrawn, source rod loaded, yet power stayed at exactly 0 forever).
+     * {@link #PHYSICS_SHAPE_RECOMPUTE_INTERVAL_TICKS} ticks, with the delayed neutron data weighted by each
+     * nuclide's fission rate in the new shape (stage 2-2), and refreshes the external neutron source term
+     * ({@link #computeSourceNeutronsPerSecond()}, stage 2-1). Before stage 2-1 there was no source term: a population
+     * at zero was instead "seeded" once from the source hatch's strength, and a subcritical core decayed toward
+     * zero (the 1e-97 telemetry readings); the source term now holds a subcritical core at its physical
+     * source-driven level and starts a core from a true zero.
      */
     private void updatePhysicsShape() {
         if (physicsShapeTicksUntilRecompute > 0) {
@@ -1482,34 +1490,51 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
 
         advanceNeutronSourceDecay();
         lengthMismatch = computeLengthMismatch();
+        // Stage 2-3a: write every port's in-memory fuel state back into its item once per shape recompute (5 s).
+        for (MetaTileEntityFuelAssemblyPort port : cachedAssemblyPorts) port.flushFuelState();
 
         ReactorGeometry geometry = buildReactorGeometry();
         cmfdResult = geometry.size() > 0 ? CMFDSolver.solve(geometry) : null;
 
-        List<FuelComposition> loadedCompositions = new ArrayList<>();
-        for (MetaTileEntityFuelAssemblyPort fuelPort : cachedFuelPorts) {
-            FuelComposition composition = fuelPort.getLoadedComposition();
-            if (composition != null) loadedCompositions.add(composition);
-        }
-        Map<Element, Double> fissionShares = PointKineticsConstants.aggregateFissionShares(loadedCompositions);
-        pointKineticsConstants = fissionShares.isEmpty() ? null :
-                PointKineticsConstants.fissionWeighted(fissionShares,
-                        PointKineticsConstants.STANDARD_PROMPT_NEUTRON_LIFETIME);
-        if (pointKineticsConstants != null && pointKineticsState.relativeNeutronPopulation <= 0) {
-            double sourceSeed = computeNeutronSourceSeed();
-            if (sourceSeed > 0) {
-                pointKineticsState = PointKineticsState.equilibrium(sourceSeed, pointKineticsConstants);
+        // Stage 2-2: delayed neutron data weighted by each nuclide's fission rate in this CMFD shape.
+        Map<Element, Double> fissionRates = new HashMap<>();
+        if (cmfdResult != null) {
+            for (MetaTileEntityFuelAssemblyPort fuelPort : cachedFuelPorts) {
+                FuelComposition composition = fuelPort.getLoadedComposition();
+                if (composition == null) continue;
+                NodePosition top = fuelPortTopPosition(fuelPort);
+                double fastSum = 0.0;
+                double thermalSum = 0.0;
+                for (int y = CHANNEL_BOTTOM_Y_RELATIVE; y <= top.y(); y++) {
+                    NodePosition node = new NodePosition(top.x(), y, top.z());
+                    fastSum += cmfdResult.fastFlux().getOrDefault(node, 0.0);
+                    thermalSum += cmfdResult.thermalFlux().getOrDefault(node, 0.0);
+                }
+                PointKineticsConstants.accumulateFissionRates(fissionRates, composition.moleFractionByIsotope,
+                        fastSum, thermalSum);
             }
         }
+        pointKineticsConstants = fissionRates.isEmpty() ? null :
+                PointKineticsConstants.fissionWeighted(fissionRates,
+                        PointKineticsConstants.STANDARD_PROMPT_NEUTRON_LIFETIME);
+        // Stage 2-1: a real source term replaces the old one-off "seed" -- see NeutronSourceStrength.
+        sourceNeutronsPerSecond = computeSourceNeutronsPerSecond();
+        neutronSourceRate = NeutronSourceStrength.relativeRate(sourceNeutronsPerSecond,
+                computeRatedThermalPowerWatts(), PointKineticsConstants.STANDARD_PROMPT_NEUTRON_LIFETIME);
     }
 
     /**
-     * Fraction of Californium-252 decays that proceed via spontaneous fission (the branch that actually emits
-     * neutrons, as opposed to the other 96.91% alpha branch) -- a real, confident physical constant, not a
-     * gameplay-balance value (see {@code ConfigHolder.reactor.neutronSourceStrengthCoefficient} for the actual
-     * tunable knob in this calculation).
+     * External neutron source (neutrons/s) for point kinetics, refreshed with every shape recompute (stage 2-1):
+     * the startup source hatch's Cf-252 plus the loaded fuel's own spontaneous fission, times
+     * {@code ConfigHolder.reactor.neutronSourceStrengthMultiplier}.
      */
-    private static final double CF252_SPONTANEOUS_FISSION_BRANCHING_RATIO = 0.0309;
+    private double sourceNeutronsPerSecond = 0.0;
+    /** {@link #sourceNeutronsPerSecond} in point kinetics' relative units (per second). */
+    private double neutronSourceRate = 0.0;
+
+    public double getSourceNeutronsPerSecond() {
+        return sourceNeutronsPerSecond;
+    }
 
     /**
      * Advances the loaded neutron source hatch's rod (if any) by one shape-recompute interval's worth of decay,
@@ -1535,24 +1560,26 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     }
 
     /**
-     * @return a point-kinetics seed value proportional to the loaded neutron source hatch's current Cf-252
-     *         spontaneous fission rate, or 0 if no hatch/rod is present -- see
-     *         {@code ConfigHolder.reactor.neutronSourceStrengthCoefficient}'s own JavaDoc for the conversion.
+     * @return the Cf-252 source (physical strength from its real half-life -- see
+     *         {@link NeutronSourceStrength#cf252NeutronsPerSecond}) plus the fuel's own spontaneous fission, in
+     *         neutrons/s, scaled by {@code ConfigHolder.reactor.neutronSourceStrengthMultiplier}
      */
-    private double computeNeutronSourceSeed() {
+    private double computeSourceNeutronsPerSecond() {
+        double neutrons = 0.0;
         for (IMultiblockPart part : getMultiblockParts()) {
             if (!(part instanceof MetaTileEntityNeutronSourceHatch sourceHatch)) continue;
             ItemStack stack = sourceHatch.getInsertedItem();
-            if (!(stack.getItem() instanceof ItemNeutronSourceRod sourceRod)) return 0.0;
-
-            double cf252Amount = sourceRod.getIsotopeAmounts(stack).getOrDefault(GTNLElements.Cf252, 0.0);
-            if (cf252Amount <= 0) return 0.0;
-            double compressedHalfLifeSeconds = ConfigHolder.reactor.neutronSourceCompressedHalfLifeDays * 86400.0;
-            double decayConstant = Math.log(2) / compressedHalfLifeSeconds;
-            double spontaneousFissionRate = cf252Amount * decayConstant * CF252_SPONTANEOUS_FISSION_BRANCHING_RATIO;
-            return spontaneousFissionRate * ConfigHolder.reactor.neutronSourceStrengthCoefficient;
+            if (stack.getItem() instanceof ItemNeutronSourceRod sourceRod) {
+                // The source rod's inventory is kept in grams.
+                neutrons += NeutronSourceStrength.cf252NeutronsPerSecond(
+                        sourceRod.getIsotopeAmounts(stack).getOrDefault(GTNLElements.Cf252, 0.0));
+            }
+            break;
         }
-        return 0.0;
+        for (MetaTileEntityFuelAssemblyPort fuelPort : cachedFuelPorts) {
+            neutrons += NeutronSourceStrength.intrinsicNeutronsPerSecond(fuelPort.getIsotopeMassesGrams());
+        }
+        return neutrons * ConfigHolder.reactor.neutronSourceStrengthMultiplier;
     }
 
     /**
@@ -1603,14 +1630,10 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
             return;
         }
 
-        // Guards against the same "no valid neutron source" case updatePhysicsShape()'s own reseed leaves
-        // unresolved (sourceSeed <= 0 there simply skips reseeding, since a reactor with no source hatch/rod
-        // genuinely cannot start -- see that method's own JavaDoc): without this, pointKineticsState could stay
-        // at its initial zero-length precursor array while pointKineticsConstants.groupCount() is already
-        // nonzero (fuel loaded), and PointKineticsSolver.advance() would throw ArrayIndexOutOfBoundsException on
-        // the very next tick (confirmed via a real playtest crash, 2026-09-22). Falls back to a genuine
-        // zero-population state of the correct length, not an equilibrium seed -- only
-        // computeNeutronSourceSeed() > 0 is allowed to actually start the reactor from zero.
+        // Without this, pointKineticsState could stay at its initial zero-length precursor array while
+        // pointKineticsConstants.groupCount() is already nonzero (fuel loaded), and PointKineticsSolver.advance()
+        // would throw ArrayIndexOutOfBoundsException (a real playtest crash, 2026-09-22). Falls back to a genuine
+        // zero population of the correct length; the source term (stage 2-1) then raises it physically.
         if (pointKineticsState.precursorConcentrations.length != pointKineticsConstants.groupCount()) {
             pointKineticsState = new PointKineticsState(0.0, new double[pointKineticsConstants.groupCount()]);
         }
@@ -1644,7 +1667,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
                 voidReactivity + moderatorTemperatureReactivity + dopplerReactivity;
 
         pointKineticsState = PointKineticsSolver.advance(pointKineticsState, totalReactivity, TICK_SECONDS,
-                pointKineticsConstants);
+                pointKineticsConstants, neutronSourceRate);
 
         // Complementary post-advance half of updateLocalDopplerAndXenonReactivity() -- see
         // advanceLocalXenonStates()'s own JavaDoc for why this runs after (not folded into) the pass above.
@@ -1738,7 +1761,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
                     (localFuelTemperatureKelvin - AMBIENT_TEMPERATURE_KELVIN);
             dopplerWeights[i] = fastFlux * fastFlux;
 
-            XenonIodineState localState = fuelRod.getLocalXenonIodineState(stack, xenonIodineState);
+            XenonIodineState localState = fuelPort.getXenonIodineState(xenonIodineState);
             iodineValues[i] = localState.iodineConcentration();
             xenonValues[i] = localState.xenonConcentration();
             xenonWeights[i] = thermalFlux * thermalFlux;
@@ -1778,10 +1801,10 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
             double thermalFlux = cmfdResult.thermalFlux().getOrDefault(topPosition, 0.0);
             double localRelativePower = (fastFlux + thermalFlux) * globalRelativePower;
 
-            XenonIodineState localState = fuelRod.getLocalXenonIodineState(stack, xenonIodineState);
+            XenonIodineState localState = fuelPort.getXenonIodineState(xenonIodineState);
             XenonIodineState advanced = XenonIodineSolver.advance(localState, localRelativePower, TICK_SECONDS,
                     xenonConstants);
-            fuelRod.setLocalXenonIodineState(stack, advanced);
+            fuelPort.setXenonIodineState(advanced);
         }
     }
 
@@ -1942,7 +1965,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
             double localFastFlux = cmfdResult.fastFlux().getOrDefault(topPosition, 0.0);
             double localThermalFlux = cmfdResult.thermalFlux().getOrDefault(topPosition, 0.0);
 
-            Map<Element, Double> current = fuelRod.getIsotopeAmounts(stack);
+            Map<Element, Double> current = fuelPort.getLoadedIsotopeAmounts();
             Map<Element, Double> next = FuelBurnupEngine.advance(current, captureDaughters, localFastFlux,
                     localThermalFlux, relativePower, ConfigHolder.reactor.fuelBurnupRateCoefficient, TICK_SECONDS);
             fuelPort.setLoadedIsotopeAmounts(next);
@@ -2669,12 +2692,46 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     private static final int PHYSICS_DISPLAY_SYNC_INTERVAL_TICKS = 20;
     private int physicsDisplaySyncTicks = 0;
 
+    /**
+     * Reactor period (s, the e-folding time of the neutron population) measured over the last display interval, as
+     * a real period meter does from the rate of change of the neutron level (stage 2-1, 2026-11-27); infinite when
+     * steady, negative while power falls. {@link #displayDelayedNeutronFraction} is the current beta, for showing
+     * reactivity in dollars.
+     */
+    private double reactorPeriodSeconds = Double.POSITIVE_INFINITY;
+    private double periodReferencePopulation = 0.0;
+    private double displayDelayedNeutronFraction = 0.0;
+
+    private void updateReactorPeriod() {
+        double now = pointKineticsState.relativeNeutronPopulation;
+        double intervalSeconds = PHYSICS_DISPLAY_SYNC_INTERVAL_TICKS * TICK_SECONDS;
+        if (now > 0 && periodReferencePopulation > 0) {
+            double growth = Math.log(now / periodReferencePopulation);
+            reactorPeriodSeconds = Math.abs(growth) < 1.0e-9 ? Double.POSITIVE_INFINITY : intervalSeconds / growth;
+        } else {
+            reactorPeriodSeconds = Double.POSITIVE_INFINITY;
+        }
+        periodReferencePopulation = now;
+        displayDelayedNeutronFraction = pointKineticsConstants != null ?
+                pointKineticsConstants.totalDelayedNeutronFraction : 0.0;
+    }
+
+    public double getReactorPeriodSeconds() {
+        return reactorPeriodSeconds;
+    }
+
+    /** Current total delayed neutron fraction (0 without fuel), client-synced -- reactivity in dollars is rho/beta. */
+    public double getDelayedNeutronFraction() {
+        return displayDelayedNeutronFraction;
+    }
+
     /** Bounds {@link #updateXenonDeadTimeEstimate()}'s lookahead loop -- see its own JavaDoc. */
     private static final double XENON_DEAD_TIME_MAX_LOOKAHEAD_SECONDS = 4.0 * 3600.0;
 
     private void syncPhysicsDisplayPeriodically() {
         if (physicsDisplaySyncTicks-- > 0) return;
-        physicsDisplaySyncTicks = PHYSICS_DISPLAY_SYNC_INTERVAL_TICKS;
+        physicsDisplaySyncTicks = PHYSICS_DISPLAY_SYNC_INTERVAL_TICKS - 1;
+        updateReactorPeriod();
         updateXenonDeadTimeEstimate();
         writeCustomData(UPDATE_OPERATING_STATUS, this::writeOperatingStatus);
     }
@@ -2756,6 +2813,10 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         buf.writeVarInt(operatingMode);
         buf.writeString(refuelChecklistLine);
         buf.writeString(refuelDetailLine);
+        buf.writeDouble(refuelingBaselinePopulation);
+        buf.writeDouble(reactorPeriodSeconds);
+        buf.writeDouble(displayDelayedNeutronFraction);
+        buf.writeDouble(sourceNeutronsPerSecond);
         buf.writeDouble(pointKineticsState.relativeNeutronPopulation);
         buf.writeDouble(totalReactivity);
         buf.writeDouble(shapeReactivityPcm);
@@ -2827,6 +2888,10 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         operatingMode = buf.readVarInt();
         refuelChecklistLine = buf.readString(256);
         refuelDetailLine = buf.readString(256);
+        refuelingBaselinePopulation = buf.readDouble();
+        reactorPeriodSeconds = buf.readDouble();
+        displayDelayedNeutronFraction = buf.readDouble();
+        sourceNeutronsPerSecond = buf.readDouble();
         // Display-only on the client: just enough of each state to back this class's own getters, not a full
         // reconstruction (the client never runs updatePhysicsAmplitude() itself, so precursor/iodine detail is
         // never needed here).
@@ -2913,6 +2978,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         data.setBoolean("RefuelingHold", refuelingHold);
         if (refuelingHoldReason != null) data.setString("RefuelingHoldReason", refuelingHoldReason.name());
         data.setDouble("RefuelingBaselineM", refuelingBaselineMultiplication);
+        data.setDouble("RefuelingBaselinePopulation", refuelingBaselinePopulation);
         data.setBoolean("EverCritical", everCritical);
         data.setLong("SubcriticalSinceWorldTick", subcriticalSinceWorldTick);
         return data;
@@ -2965,6 +3031,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         // Worlds saved before stage 1-4c: assume the core has operated and start the wait at the first tick after
         // loading (the safe side) -- see updateSubcriticalClock().
         everCritical = !data.hasKey("EverCritical") || data.getBoolean("EverCritical");
+        refuelingBaselinePopulation = data.getDouble("RefuelingBaselinePopulation");
         subcriticalSinceWorldTick = data.hasKey("SubcriticalSinceWorldTick") ?
                 data.getLong("SubcriticalSinceWorldTick") : UNKNOWN_SUBCRITICAL_SINCE;
     }

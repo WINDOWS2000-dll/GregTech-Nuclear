@@ -24,6 +24,26 @@ public final class PackedDoubles {
         return packed;
     }
 
+    /**
+     * Single-precision packing (one int per value) for data whose saved precision does not need 15 digits -- the
+     * decay heat groups (2026-11-28, stage 2-3a, decision F1): a 36-layer x 23-group assembly as doubles is ~6.6 KB,
+     * and 256 of them fill a chunk past Minecraft 1.12's ~1 MB compressed chunk limit. Values are rounded only when
+     * saved; the running state stays double in memory.
+     */
+    @NotNull
+    public static int[] packFloats(@NotNull double[] values) {
+        int[] packed = new int[values.length];
+        for (int i = 0; i < values.length; i++) packed[i] = Float.floatToRawIntBits((float) values[i]);
+        return packed;
+    }
+
+    @NotNull
+    public static double[] unpackFloats(@NotNull int[] packed) {
+        double[] values = new double[packed.length];
+        for (int i = 0; i < packed.length; i++) values[i] = Float.intBitsToFloat(packed[i]);
+        return values;
+    }
+
     /** An odd-length input (malformed data) drops its trailing int. */
     @NotNull
     public static double[] unpack(@NotNull int[] packed) {

@@ -138,12 +138,21 @@ public final class RefuelingEvaluator {
         return (1.0 - totalReactivity) / -totalReactivity;
     }
 
-    /** @return the reason loading must be put on hold now, or {@code null} if it may continue. */
+    /**
+     * @param population         current neutron population -- the source-range count rate, which a source-driven
+     *                           subcritical core holds at {@code ~S * Lambda / -rho} (stage 2-1)
+     * @param baselinePopulation population at refueling start / last resume; when it is 0 (no source and no
+     *                           fuel), the computed multiplication stands in, as before stage 2-1
+     * @return the reason loading must be put on hold now, or {@code null} if it may continue.
+     */
     @Nullable
-    public static HoldReason holdReason(double multiplication, double baselineMultiplication, double temperatureKelvin,
+    public static HoldReason holdReason(double population, double baselinePopulation, double multiplication,
+                                        double baselineMultiplication, double temperatureKelvin,
                                         double coolantMassKg, double ratedCoolantMassKg, double boronPpm,
                                         @NotNull Limits limits) {
-        if (multiplication >= DOUBLING_RATIO * baselineMultiplication) return HoldReason.COUNT_RATE_DOUBLED;
+        boolean doubled = baselinePopulation > 0 ? population >= DOUBLING_RATIO * baselinePopulation :
+                multiplication >= DOUBLING_RATIO * baselineMultiplication;
+        if (doubled) return HoldReason.COUNT_RATE_DOUBLED;
         if (temperatureKelvin > limits.maxTemperatureKelvin()) return HoldReason.TEMPERATURE_HIGH;
         if (coolantMassKg < ratedCoolantMassKg) return HoldReason.COOLANT_LOW;
         if (boronPpm < limits.minBoronPpm()) return HoldReason.BORON_LOW;

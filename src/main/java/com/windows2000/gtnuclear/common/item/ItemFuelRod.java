@@ -115,8 +115,10 @@ public class ItemFuelRod extends Item implements ITintedItem {
         List<String> nuclides = new ArrayList<>();
         NBTTagList list = tag.getTagList(NBT_NUCLIDES, Constants.NBT.TAG_STRING);
         for (int i = 0; i < list.tagCount(); i++) nuclides.add(list.getStringTagAt(i));
+        double[] decayHeat = tag.hasKey(NBT_DECAY_HEAT, Constants.NBT.TAG_INT_ARRAY) ?
+                PackedDoubles.unpackFloats(tag.getIntArray(NBT_DECAY_HEAT)) : new double[0];
         return FuelAssemblyState.restore(length, tag.getInteger(NBT_STATE_VERSION), nuclides,
-                unpack(tag, NBT_COMPOSITION), unpack(tag, NBT_POISONS), unpack(tag, NBT_DECAY_HEAT),
+                unpack(tag, NBT_COMPOSITION), unpack(tag, NBT_POISONS), decayHeat,
                 tag.getInteger(NBT_DECAY_HEAT_GROUPS), freshFractions());
     }
 
@@ -130,7 +132,8 @@ public class ItemFuelRod extends Item implements ITintedItem {
         tag.setTag(NBT_NUCLIDES, nuclides);
         tag.setTag(NBT_COMPOSITION, new NBTTagIntArray(PackedDoubles.pack(state.compositionArray())));
         tag.setTag(NBT_POISONS, new NBTTagIntArray(PackedDoubles.pack(state.poisonArray())));
-        tag.setTag(NBT_DECAY_HEAT, new NBTTagIntArray(PackedDoubles.pack(state.decayHeatArray())));
+        // Decay heat groups are saved single precision (stage 2-3a, decision F1 -- see PackedDoubles#packFloats).
+        tag.setTag(NBT_DECAY_HEAT, new NBTTagIntArray(PackedDoubles.packFloats(state.decayHeatArray())));
         tag.setInteger(NBT_DECAY_HEAT_GROUPS, state.decayHeatGroups());
     }
 
@@ -148,7 +151,12 @@ public class ItemFuelRod extends Item implements ITintedItem {
      */
     @NotNull
     public Map<Element, Double> getIsotopeAmounts(@NotNull ItemStack stack) {
-        FuelAssemblyState state = getState(stack);
+        return isotopeAmounts(getState(stack));
+    }
+
+    /** {@link #getIsotopeAmounts} from an already-loaded state (stage 2-3a: the port keeps it in memory). */
+    @NotNull
+    public Map<Element, Double> isotopeAmounts(@Nullable FuelAssemblyState state) {
         Map<String, Double> bySymbol = state != null ? state.averageComposition() : freshFractions();
         Map<Element, Double> amounts = new LinkedHashMap<>();
         for (Map.Entry<String, Double> entry : bySymbol.entrySet()) {
@@ -162,11 +170,31 @@ public class ItemFuelRod extends Item implements ITintedItem {
     public void setIsotopeAmounts(@NotNull ItemStack stack, @NotNull Map<Element, Double> amounts) {
         FuelAssemblyState state = getState(stack);
         if (state == null) return;
+        applyIsotopeAmounts(state, amounts);
+        setState(stack, state);
+    }
+
+    /** {@link #setIsotopeAmounts} on an in-memory state (stage 2-3a). */
+    public static void applyIsotopeAmounts(@NotNull FuelAssemblyState state, @NotNull Map<Element, Double> amounts) {
         Map<String, Double> bySymbol = new LinkedHashMap<>();
         for (Map.Entry<Element, Double> entry : amounts.entrySet()) bySymbol.put(entry.getKey().symbol,
                 entry.getValue());
         state.setAllLayersComposition(bySymbol);
-        setState(stack, state);
+    }
+
+    /** Layer-averaged xenon/iodine of an in-memory state (stage 2-3a). */
+    @NotNull
+    public static XenonIodineState xenonIodineState(@NotNull FuelAssemblyState state) {
+        return new XenonIodineState(state.averagePoison(FuelAssemblyState.POISON_IODINE),
+                state.averagePoison(FuelAssemblyState.POISON_XENON));
+    }
+
+    /** Writes {@code xenonState} into every layer of an in-memory state (stage 2-3a). */
+    public static void applyXenonIodineState(@NotNull FuelAssemblyState state, @NotNull XenonIodineState xenonState) {
+        for (int layer = 0; layer < state.length(); layer++) {
+            state.setPoison(layer, FuelAssemblyState.POISON_IODINE, xenonState.iodineConcentration());
+            state.setPoison(layer, FuelAssemblyState.POISON_XENON, xenonState.xenonConcentration());
+        }
     }
 
     /**
@@ -214,6 +242,35 @@ public class ItemFuelRod extends Item implements ITintedItem {
     }
 
     /**
+     * Every tracked nuclide's current mass in grams, keyed by symbol -- {@link #isotopeMassKg} for all of them at
+     * once, reading the NBT state a single time (used for the fuel's own spontaneous fission source, stage 2-1).
+     */
+    @NotNull
+    public Map<String, Double> isotopeMassesGrams(@NotNull ItemStack stack) {
+        return isotopeMassesGrams(getState(stack));
+    }
+
+    /** {@link #isotopeMassesGrams(ItemStack)} from an in-memory state (stage 2-3a). */
+    @NotNull
+    public Map<String, Double> isotopeMassesGrams(@Nullable FuelAssemblyState state) {
+        Map<String, Double> masses = new java.util.HashMap<>();
+        if (state == null) return masses;
+        double freshMeanMass = 0.0;
+        for (Map.Entry<String, Double> entry : freshFractions().entrySet()) {
+            Element fresh = Elements.get(entry.getKey());
+            if (fresh != null) freshMeanMass += entry.getValue() * fresh.getMass();
+        }
+        if (freshMeanMass <= 0) return masses;
+        double initialGrams = state.length() * ConfigHolder.reactor.fuelUraniumPerLayerKg * 1000.0;
+        for (Map.Entry<String, Double> entry : state.averageComposition().entrySet()) {
+            Element element = Elements.get(entry.getKey());
+            if (element == null || entry.getValue() <= 0) continue;
+            masses.put(entry.getKey(), initialGrams * entry.getValue() * element.getMass() / freshMeanMass);
+        }
+        return masses;
+    }
+
+    /**
      * No hard "fuel lifetime" threshold is modeled (2026-09 design decision, see this mod's design memory) -- an
      * assembly is simply whatever fraction of its original fission-producing capability remains. Weighted by each
      * nuclide's own fission cross-sections, so fertile U-238 barely counts and bred Pu-239 is credited.
@@ -221,9 +278,13 @@ public class ItemFuelRod extends Item implements ITintedItem {
      * @return current / fresh fission-weighted content, clamped to {@code [0, 1]}
      */
     public double getFissileCapabilityFraction(@NotNull ItemStack stack) {
+        return fissileCapabilityFraction(getState(stack));
+    }
+
+    /** {@link #getFissileCapabilityFraction} from an in-memory state (stage 2-3a). */
+    public double fissileCapabilityFraction(@Nullable FuelAssemblyState state) {
         double initial = fissionWeighted(freshFractions());
         if (initial <= 0) return 0.0;
-        FuelAssemblyState state = getState(stack);
         double current = fissionWeighted(state != null ? state.averageComposition() : freshFractions());
         return Math.max(0.0, Math.min(1.0, current / initial));
     }

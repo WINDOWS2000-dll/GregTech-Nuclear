@@ -28,4 +28,15 @@ class PackedDoublesTest {
         assertArrayEquals(new double[0], PackedDoubles.unpack(new int[0]));
         assertEquals(1, PackedDoubles.unpack(new int[3]).length);
     }
+
+    @Test
+    void floatPackingKeepsSinglePrecisionAndOneIntPerValue() {
+        double[] values = { 0.0, 1.0, 1.0e-12, 3.14159265358979, 6.02e23, -2.5 };
+        int[] packed = PackedDoubles.packFloats(values);
+        assertEquals(values.length, packed.length);
+        double[] restored = PackedDoubles.unpackFloats(packed);
+        for (int i = 0; i < values.length; i++) {
+            assertEquals(values[i], restored[i], Math.abs(values[i]) * 1.0e-7);
+        }
+    }
 }

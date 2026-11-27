@@ -223,7 +223,7 @@ class ReactorAutoControlSequencerTest {
     void trippedReactorIsNeverNudgedEvenWithAStrongWithdrawSignal() {
         ReactorAutoControlSequencer sequencer = new ReactorAutoControlSequencer();
         sequencer.toggleActive();
-        // Same host state that drives "withdraw 1%" while OPERATING (see the ascending tests below), but tripped.
+        // Same host state that drives "withdraw 0.2%" while OPERATING (see the ascending tests below), but tripped.
         FakeAutoControlHost host = rodControlHost(0.5, -0.009, 0.0, 0.0);
         host.operatingState = new ReactorOperatingState(ReactorOperatingStage.TRIPPED, ScramReason.MANUAL);
 
@@ -237,10 +237,10 @@ class ReactorAutoControlSequencerTest {
         sequencer.toggleActive();
         FakeAutoControlHost host = rodControlHost(0.5, 0.009, 0.0, 0.0);
 
-        assertEquals("insert 1%", sequencer.update(host));
+        assertEquals("insert 0.2%", sequencer.update(host));
         assertEquals(1, host.nudges.size());
         assertEquals(0, host.nudges.get(0).bankId);
-        assertEquals(0.01, host.nudges.get(0).deltaFraction, 1e-9);
+        assertEquals(0.002, host.nudges.get(0).deltaFraction, 1e-9);
     }
 
     @Test
@@ -249,8 +249,8 @@ class ReactorAutoControlSequencerTest {
         sequencer.toggleActive();
         FakeAutoControlHost host = rodControlHost(0.5, 0.005, 0.0, 0.0);
 
-        assertEquals("insert 0.1%", sequencer.update(host));
-        assertEquals(0.001, host.nudges.get(0).deltaFraction, 1e-9);
+        assertEquals("insert 0.02%", sequencer.update(host));
+        assertEquals(0.0002, host.nudges.get(0).deltaFraction, 1e-9);
     }
 
     @Test
@@ -269,8 +269,8 @@ class ReactorAutoControlSequencerTest {
         sequencer.toggleActive();
         FakeAutoControlHost host = rodControlHost(0.5, -0.004, 0.004, 1.0);
 
-        assertEquals("withdraw 0.1%", sequencer.update(host));
-        assertEquals(-0.001, host.nudges.get(0).deltaFraction, 1e-9);
+        assertEquals("withdraw 0.02%", sequencer.update(host));
+        assertEquals(-0.0002, host.nudges.get(0).deltaFraction, 1e-9);
     }
 
     @Test
@@ -279,8 +279,8 @@ class ReactorAutoControlSequencerTest {
         sequencer.toggleActive();
         FakeAutoControlHost host = rodControlHost(0.5, -0.004, 0.012, 1.0);
 
-        assertEquals("withdraw 1%", sequencer.update(host));
-        assertEquals(-0.01, host.nudges.get(0).deltaFraction, 1e-9);
+        assertEquals("withdraw 0.2%", sequencer.update(host));
+        assertEquals(-0.002, host.nudges.get(0).deltaFraction, 1e-9);
     }
 
     @Test
@@ -289,8 +289,8 @@ class ReactorAutoControlSequencerTest {
         sequencer.toggleActive();
         FakeAutoControlHost host = rodControlHost(0.95, 0.009, 0.0, 0.0);
 
-        assertEquals("insert 1%", sequencer.update(host));
-        assertEquals(0.01, host.nudges.get(0).deltaFraction, 1e-9);
+        assertEquals("insert 0.2%", sequencer.update(host));
+        assertEquals(0.002, host.nudges.get(0).deltaFraction, 1e-9);
     }
 
     @Test
@@ -299,8 +299,8 @@ class ReactorAutoControlSequencerTest {
         sequencer.toggleActive();
         FakeAutoControlHost host = rodControlHost(0.95, 0.005, 0.0, 0.0);
 
-        assertEquals("insert 0.1%", sequencer.update(host));
-        assertEquals(0.001, host.nudges.get(0).deltaFraction, 1e-9);
+        assertEquals("insert 0.02%", sequencer.update(host));
+        assertEquals(0.0002, host.nudges.get(0).deltaFraction, 1e-9);
     }
 
     @Test
@@ -309,8 +309,8 @@ class ReactorAutoControlSequencerTest {
         sequencer.toggleActive();
         FakeAutoControlHost host = rodControlHost(0.95, 0.0031, 0.0, 0.0);
 
-        assertEquals("insert 0.01%", sequencer.update(host));
-        assertEquals(0.0001, host.nudges.get(0).deltaFraction, 1e-9);
+        assertEquals("insert 0.002%", sequencer.update(host));
+        assertEquals(0.00002, host.nudges.get(0).deltaFraction, 1e-9);
     }
 
     @Test
@@ -329,8 +329,8 @@ class ReactorAutoControlSequencerTest {
         sequencer.toggleActive();
         FakeAutoControlHost host = rodControlHost(0.95, 0.0, 0.001, 1.0);
 
-        assertEquals("withdraw 0.01%", sequencer.update(host));
-        assertEquals(-0.0001, host.nudges.get(0).deltaFraction, 1e-9);
+        assertEquals("withdraw 0.002%", sequencer.update(host));
+        assertEquals(-0.00002, host.nudges.get(0).deltaFraction, 1e-9);
     }
 
     @Test
@@ -339,8 +339,8 @@ class ReactorAutoControlSequencerTest {
         sequencer.toggleActive();
         FakeAutoControlHost host = rodControlHost(0.95, 0.0, 0.01, 1.0);
 
-        assertEquals("withdraw 0.1%", sequencer.update(host));
-        assertEquals(-0.001, host.nudges.get(0).deltaFraction, 1e-9);
+        assertEquals("withdraw 0.02%", sequencer.update(host));
+        assertEquals(-0.0002, host.nudges.get(0).deltaFraction, 1e-9);
     }
 
     @Test
@@ -350,8 +350,8 @@ class ReactorAutoControlSequencerTest {
         // Without the power-ceiling override this would be a plain error=0 "hold" (bank0Worth=0, reactivityPcm=0).
         FakeAutoControlHost host = rodControlHost(1.05, 0.0, 0.0, 0.0);
 
-        assertEquals("insert 0.1%", sequencer.update(host));
-        assertEquals(0.001, host.nudges.get(0).deltaFraction, 1e-9);
+        assertEquals("insert 0.02%", sequencer.update(host));
+        assertEquals(0.0002, host.nudges.get(0).deltaFraction, 1e-9);
     }
 
     private static final class NudgeCall {
@@ -377,6 +377,19 @@ class ReactorAutoControlSequencerTest {
         double bankTotalWorthReactivity = 0.0;
         double totalReactivity = 0.0;
         double relativeNeutronPopulation = 0.0;
+        double reactorPeriodSeconds = Double.POSITIVE_INFINITY;
+        // 0.02 keeps the 0.15 $ target cap at the 300 pcm the pre-2026-11-28 tests below were written against.
+        double delayedNeutronFraction = 0.02;
+
+        @Override
+        public double getReactorPeriodSeconds() {
+            return reactorPeriodSeconds;
+        }
+
+        @Override
+        public double getDelayedNeutronFraction() {
+            return delayedNeutronFraction;
+        }
 
         boolean coolantInjectionRequested = false;
         boolean pressurizationRequested = false;
@@ -460,5 +473,46 @@ class ReactorAutoControlSequencerTest {
         public void requestNudgeBank(int bankId, double deltaFraction) {
             nudges.add(new NudgeCall(bankId, deltaFraction));
         }
+    }
+
+    @Test
+    void shortPeriodForcesInsertionRegardlessOfTarget() {
+        ReactorAutoControlSequencer sequencer = new ReactorAutoControlSequencer();
+        sequencer.toggleActive();
+        // Same state that drives "withdraw 0.2%" in withdrawWhenWellBelowTarget-style tests, but power is already
+        // climbing with a 10 s period.
+        FakeAutoControlHost host = rodControlHost(0.5, -0.004, 0.012, 1.0);
+        host.reactorPeriodSeconds = 10.0;
+        assertEquals("insert 0.2% (period)", sequencer.update(host));
+        assertEquals(0.002, host.nudges.get(0).deltaFraction, 1e-9);
+    }
+
+    @Test
+    void moderatePeriodBlocksWithdrawalOnly() {
+        ReactorAutoControlSequencer sequencer = new ReactorAutoControlSequencer();
+        sequencer.toggleActive();
+        FakeAutoControlHost host = rodControlHost(0.5, -0.004, 0.012, 1.0);
+        host.reactorPeriodSeconds = 40.0;
+        assertEquals("hold (period)", sequencer.update(host));
+        assertTrue(host.nudges.isEmpty());
+
+        // A falling power (negative period) never blocks anything.
+        ReactorAutoControlSequencer other = new ReactorAutoControlSequencer();
+        other.toggleActive();
+        FakeAutoControlHost falling = rodControlHost(0.5, -0.004, 0.012, 1.0);
+        falling.reactorPeriodSeconds = -40.0;
+        assertEquals("withdraw 0.2%", other.update(falling));
+    }
+
+    @Test
+    void targetCapIsInDollars() {
+        ReactorAutoControlSequencer sequencer = new ReactorAutoControlSequencer();
+        sequencer.toggleActive();
+        // beta 0.0065 -> cap 0.15 $ = 97.5 pcm; at +150 pcm the loop must insert even though the uncapped margin
+        // target (a fully inserted, large bank) would sit far higher.
+        FakeAutoControlHost host = rodControlHost(0.5, 0.0015, 0.5, 1.0);
+        host.delayedNeutronFraction = 0.0065;
+        String action = sequencer.update(host);
+        assertTrue(action.startsWith("insert"), action);
     }
 }

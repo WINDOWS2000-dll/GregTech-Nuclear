@@ -286,11 +286,18 @@ public class MetaTileEntityConsoleScreen extends MetaTileEntityMultiblockPart
             if (!reactor.getRefuelDetailLine().isEmpty()) lines.add(reactor.getRefuelDetailLine());
         }
         if (reactor.isRefuelingHold() && reactor.getRefuelingHoldReason() != null) {
-            lines.add(String.format("REFUEL HOLD: %s (M %.2f -> %.2f)", reactor.getRefuelingHoldReason(),
-                    reactor.getRefuelingBaselineMultiplication(), reactor.getSubcriticalMultiplication()));
+            lines.add(reactor.getRefuelingBaselinePopulation() > 0 ?
+                    String.format("REFUEL HOLD: %s (N %.2E -> %.2E)", reactor.getRefuelingHoldReason(),
+                            reactor.getRefuelingBaselinePopulation(), reactor.getRelativeNeutronPopulation()) :
+                    String.format("REFUEL HOLD: %s (M %.2f -> %.2f)", reactor.getRefuelingHoldReason(),
+                            reactor.getRefuelingBaselineMultiplication(), reactor.getSubcriticalMultiplication()));
         } else if (operatingState.stage == ReactorOperatingStage.REFUELING) {
-            lines.add(String.format("REFUELING: M %.2f (hold at %.2f)", reactor.getSubcriticalMultiplication(),
-                    2.0 * reactor.getRefuelingBaselineMultiplication()));
+            // Stage 2-1: the count-rate watch uses the real neutron population when it has a baseline.
+            lines.add(reactor.getRefuelingBaselinePopulation() > 0 ?
+                    String.format("REFUELING: N %.2E (hold at %.2E)", reactor.getRelativeNeutronPopulation(),
+                            2.0 * reactor.getRefuelingBaselinePopulation()) :
+                    String.format("REFUELING: M %.2f (hold at %.2f)", reactor.getSubcriticalMultiplication(),
+                            2.0 * reactor.getRefuelingBaselineMultiplication()));
         }
         if (operatingState.stage == ReactorOperatingStage.SHUTDOWN && reactor.getSyncedStartupBlocker() != null) {
             lines.add("STARTUP BLOCKED: " + reactor.getSyncedStartupBlocker());
@@ -374,8 +381,20 @@ public class MetaTileEntityConsoleScreen extends MetaTileEntityMultiblockPart
     private static List<String> physicsLines(@NotNull MetaTileEntityPressurizedWaterReactor reactor) {
         // Real synced values from the neutron physics tick loop (CMFD shape + point kinetics amplitude + xenon).
         List<String> lines = new ArrayList<>();
-        lines.add("POWER: " + String.format("%.4f", reactor.getRelativeNeutronPopulation()) + " (rel.)");
-        lines.add("REACTIVITY: " + String.format("%.0f", reactor.getTotalReactivity() * 1.0e5) + " pcm");
+        // Stage 2-1/2-2: exponential notation below 1% (the source range sits around 1E-10..1E-6), reactivity also
+        // in dollars (rho / beta; 1 $ = prompt critical) and the measured reactor period.
+        double power = reactor.getRelativeNeutronPopulation();
+        lines.add("POWER: " + (power >= 0.01 ? String.format("%.4f", power) : String.format("%.2E", power)) +
+                " (rel.)");
+        double beta = reactor.getDelayedNeutronFraction();
+        lines.add("REACTIVITY: " + String.format("%+.0f", reactor.getTotalReactivity() * 1.0e5) + " pcm" +
+                (beta > 0 ? String.format(" (%+.2f $)", reactor.getTotalReactivity() / beta) : ""));
+        double period = reactor.getReactorPeriodSeconds();
+        lines.add("PERIOD: " + (Double.isInfinite(period) || Math.abs(period) > 1.0e5 ? "INF" :
+                String.format("%+.1f s", period)));
+        if (reactor.getSourceNeutronsPerSecond() > 0) {
+            lines.add("SOURCE: " + String.format("%.2E", reactor.getSourceNeutronsPerSecond()) + " n/s");
+        }
         lines.add("SHAPE: " + String.format("%.0f", reactor.getShapeReactivityPcm()) + " pcm");
         lines.add("XENON: " + String.format("%.0f", reactor.getXenonReactivityWorth() * 1.0e5) + " pcm");
         lines.add("MTC: " + String.format("%.0f", reactor.getModeratorTemperatureReactivityPcm()) + " pcm");

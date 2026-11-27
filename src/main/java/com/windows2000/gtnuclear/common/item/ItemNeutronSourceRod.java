@@ -82,6 +82,8 @@ public class ItemNeutronSourceRod extends Item implements ITintedItem {
 
     @NotNull
     private Map<Element, Double> freshIsotopeAmounts() {
-        return Collections.singletonMap(GTNLElements.Cf252, ConfigHolder.reactor.neutronSourceInitialCf252Grams);
+        // Stored in grams; the config is in milligrams (stage 2-1, 2026-11-27).
+        return Collections.singletonMap(GTNLElements.Cf252,
+                ConfigHolder.reactor.neutronSourceInitialCf252Milligrams / 1000.0);
     }
 }

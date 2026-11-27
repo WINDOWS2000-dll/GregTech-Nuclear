@@ -51,4 +51,13 @@ public interface AutoControlHost {
     double getRelativeNeutronPopulation();
 
     void requestNudgeBank(int bankId, double deltaFraction);
+
+    /**
+     * Measured reactor period (s): positive while power rises, infinite when steady (stage 2-2 follow-up,
+     * 2026-11-28) -- the auto control's startup-rate limiter reads it like an operator reads a period meter.
+     */
+    double getReactorPeriodSeconds();
+
+    /** Current total delayed neutron fraction beta (0 without fuel), for limits expressed in dollars. */
+    double getDelayedNeutronFraction();
 }

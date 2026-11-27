@@ -128,7 +128,12 @@ public final class ReactorAutoControlSequencer {
 
         if (signedErrorPercent < 0) {
             if (host.isBoronConcentrationActive()) host.requestToggleBoronConcentration();
-            if (!host.isBoronDilutionActive()) host.requestToggleBoronDilution();
+            if (periodBlocksWithdrawal(host)) {
+                // Startup-rate limiter: dilution adds reactivity just like a withdrawal.
+                if (host.isBoronDilutionActive()) host.requestToggleBoronDilution();
+            } else if (!host.isBoronDilutionActive()) {
+                host.requestToggleBoronDilution();
+            }
         } else {
             if (host.isBoronDilutionActive()) host.requestToggleBoronDilution();
             if (!host.isBoronConcentrationActive()) host.requestToggleBoronConcentration();
@@ -146,7 +151,7 @@ public final class ReactorAutoControlSequencer {
         boolean rodsNearlyExhausted = avgInsertionPercent <= ConfigHolder.reactor.startupBoronAssistRodThresholdPercent;
         boolean stillSubcritical = host.getTotalReactivity() < 0.0;
 
-        if (rodsNearlyExhausted && stillSubcritical) {
+        if (rodsNearlyExhausted && stillSubcritical && !periodBlocksWithdrawal(host)) {
             boronAdjustmentRateFraction = 1.0;
             if (host.isBoronConcentrationActive()) host.requestToggleBoronConcentration();
             if (!host.isBoronDilutionActive()) host.requestToggleBoronDilution();
@@ -191,7 +196,8 @@ public final class ReactorAutoControlSequencer {
      * now. Targeting {@code currentReactivityPcm + marginFraction * thatCeiling} keeps the target strictly
      * between "no further ask" and "the absolute physical maximum," so the loop naturally settles into "hold"
      * instead of spinning a permanently-unreachable withdraw command as insertion approaches 0%. Clamped to
-     * {@code ConfigHolder.reactor.autoControlMaxTargetReactivityPcm} so the uncapped formula never asks for
+     * {@code ConfigHolder.reactor.autoControlMaxTargetReactivityDollars} (times beta) so the uncapped formula never
+     * asks for
      * anywhere near the delayed-neutron fraction beta while bank 0 still has withdrawal margin to work with.
      */
     private double computeAutoRodControlTargetPcm(@NotNull AutoControlHost host, boolean ascending,
@@ -202,7 +208,21 @@ public final class ReactorAutoControlSequencer {
         double marginFraction = ascending ? ConfigHolder.reactor.autoControlAscensionMarginFraction :
                 ConfigHolder.reactor.autoControlHoldMarginFraction;
         double uncappedTargetPcm = reactivityPcm + marginFraction * remainingWithdrawalCeilingPcm;
-        return Math.min(uncappedTargetPcm, ConfigHolder.reactor.autoControlMaxTargetReactivityPcm);
+        double capPcm = ConfigHolder.reactor.autoControlMaxTargetReactivityDollars *
+                host.getDelayedNeutronFraction() * 1.0e5;
+        return Math.min(uncappedTargetPcm, capPcm);
+    }
+
+    /** Startup-rate limiter: power rising with a period shorter than the withdrawal limit (2026-11-28). */
+    private static boolean periodBlocksWithdrawal(@NotNull AutoControlHost host) {
+        double period = host.getReactorPeriodSeconds();
+        return period > 0 && period < ConfigHolder.reactor.autoControlMinWithdrawalPeriodSeconds;
+    }
+
+    /** Startup-rate limiter: power rising faster than the insertion limit -- insert regardless of target. */
+    private static boolean periodDemandsInsertion(@NotNull AutoControlHost host) {
+        double period = host.getReactorPeriodSeconds();
+        return period > 0 && period < ConfigHolder.reactor.autoControlInsertPeriodSeconds;
     }
 
     /**
@@ -210,8 +230,37 @@ public final class ReactorAutoControlSequencer {
      *
      * @return the human-readable action label for this interval's telemetry row.
      */
+    /**
+     * Bank 0 nudge sizes (insertion fraction). Scaled down 5x on 2026-11-27 (stage 2-2, decision B): fixing beta's
+     * weighting roughly halved it (prompt critical at ~650 pcm instead of ~1370), and with the current oversized
+     * bank worth a single old 1% step near mid-insertion was ~240 pcm. Interim until stage 4 rebuilds rod worth
+     * from CMFD absorbers.
+     */
+    private static final double LARGE_STEP = 0.002;
+    private static final double MEDIUM_STEP = 0.0002;
+    private static final double SMALL_STEP = 0.00002;
+
     @NotNull
     private String updateAutoRodControlAscensionOrHold(@NotNull AutoControlHost host) {
+        // Startup-rate limiter first (2026-11-28): a real 2026-11-27 playtest rose five decades in ~50 s (0.64 $,
+        // 2.6 s period) because the reactivity target alone cannot see how fast power is already climbing.
+        if (periodDemandsInsertion(host)) {
+            host.requestNudgeBank(0, LARGE_STEP);
+            return "insert 0.2% (period)";
+        }
+        return decideAscensionOrHold(host);
+    }
+
+    /** A withdrawal nudge, unless the startup-rate limiter blocks it (checked before acting, not after). */
+    @NotNull
+    private static String withdraw(@NotNull AutoControlHost host, double step, @NotNull String label) {
+        if (periodBlocksWithdrawal(host)) return "hold (period)";
+        host.requestNudgeBank(0, -step);
+        return label;
+    }
+
+    @NotNull
+    private String decideAscensionOrHold(@NotNull AutoControlHost host) {
         boolean ascending = host.getRelativeNeutronPopulation() <
                 ConfigHolder.reactor.autoControlHoldModePowerThreshold;
         double reactivityPcm = host.getTotalReactivity() * 1.0e5;
@@ -229,17 +278,15 @@ public final class ReactorAutoControlSequencer {
         if (ascending) {
             double deadbandPcm = ConfigHolder.reactor.autoControlDeadbandPcm;
             if (errorPcm > largeStepThresholdPcm) {
-                host.requestNudgeBank(0, 0.01);
-                return "insert 1%";
+                host.requestNudgeBank(0, LARGE_STEP);
+                return "insert 0.2%";
             } else if (errorPcm > deadbandPcm) {
-                host.requestNudgeBank(0, 0.001);
-                return "insert 0.1%";
+                host.requestNudgeBank(0, MEDIUM_STEP);
+                return "insert 0.02%";
             } else if (errorPcm < -largeStepThresholdPcm) {
-                host.requestNudgeBank(0, -0.01);
-                return "withdraw 1%";
+                return withdraw(host, LARGE_STEP, "withdraw 0.2%");
             } else if (errorPcm < -deadbandPcm) {
-                host.requestNudgeBank(0, -0.001);
-                return "withdraw 0.1%";
+                return withdraw(host, MEDIUM_STEP, "withdraw 0.02%");
             } else {
                 return "hold";
             }
@@ -248,23 +295,20 @@ public final class ReactorAutoControlSequencer {
         double deadbandPcm = ConfigHolder.reactor.autoControlHoldDeadbandPcm;
         double mediumStepThresholdPcm = ConfigHolder.reactor.autoControlHoldMediumStepThresholdPcm;
         if (errorPcm > largeStepThresholdPcm) {
-            host.requestNudgeBank(0, 0.01);
-            return "insert 1%";
+            host.requestNudgeBank(0, LARGE_STEP);
+            return "insert 0.2%";
         } else if (errorPcm > mediumStepThresholdPcm) {
-            host.requestNudgeBank(0, 0.001);
-            return "insert 0.1%";
+            host.requestNudgeBank(0, MEDIUM_STEP);
+            return "insert 0.02%";
         } else if (errorPcm > deadbandPcm) {
-            host.requestNudgeBank(0, 0.0001);
-            return "insert 0.01%";
+            host.requestNudgeBank(0, SMALL_STEP);
+            return "insert 0.002%";
         } else if (errorPcm < -largeStepThresholdPcm) {
-            host.requestNudgeBank(0, -0.01);
-            return "withdraw 1%";
+            return withdraw(host, LARGE_STEP, "withdraw 0.2%");
         } else if (errorPcm < -mediumStepThresholdPcm) {
-            host.requestNudgeBank(0, -0.001);
-            return "withdraw 0.1%";
+            return withdraw(host, MEDIUM_STEP, "withdraw 0.02%");
         } else if (errorPcm < -deadbandPcm) {
-            host.requestNudgeBank(0, -0.0001);
-            return "withdraw 0.01%";
+            return withdraw(host, SMALL_STEP, "withdraw 0.002%");
         } else {
             return "hold";
         }

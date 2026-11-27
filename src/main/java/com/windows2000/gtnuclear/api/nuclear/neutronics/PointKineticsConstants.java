@@ -3,10 +3,8 @@ package com.windows2000.gtnuclear.api.nuclear.neutronics;
 import gregtech.api.unification.Element;
 import gregtech.api.unification.NeutronCrossSections;
 
-import com.windows2000.gtnuclear.api.nuclear.fuel.FuelComposition;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -54,32 +52,31 @@ public final class PointKineticsConstants {
     }
 
     /**
-     * Builds effective composite point kinetics constants for a reactor whose fuel is a mix of fissile isotopes,
-     * combining each isotope's own six-group delayed neutron data weighted by that isotope's mole fraction in the
-     * fuel -- the standard reactor-physics technique for core-averaged delayed neutron parameters, using mole
-     * fraction as a stand-in for true fission share (each isotope's contribution to core beta is properly its own
-     * beta weighted by its fraction of total fissions; mole fraction is exact when the contributing isotopes share
-     * comparable fission cross-sections, and a reasonable standard approximation otherwise -- same caveat as
-     * {@link com.windows2000.gtnuclear.api.nuclear.fuel.FuelComposition}'s own weighting). This is exact when
-     * every contributing isotope also shares identical group decay constants (true of every isotope currently
-     * registered in GTST, see {@code Elements}' own delayed neutron data provenance comment).
+     * Builds effective composite point kinetics constants for a core whose fissions are shared among several
+     * nuclides. Each group's delayed fraction is the <b>fission-rate</b>-weighted mean of the nuclides' own
+     * fractions, {@code beta_i = sum_k w_k beta_ik} with {@code w_k = R_k / sum R} -- delayed neutrons come from
+     * fissions, so a nuclide contributes in proportion to how often it fissions, not to how much of it is present.
+     * (Until 2026-11-27, stage 2-2 of this mod's reactor physics rework, the weights were mole fractions: U-238, 95%
+     * of LEU but under 2% of its fissions here, then dominated and beta came out ~2.1x too large -- 0.0137 instead
+     * of ~0.0065 for LEU 4.5%.) Each group's decay constant is the beta-weighted mean
+     * {@code lambda_i = sum_k w_k beta_ik lambda_ik / beta_i}, exact for the group's precursor population (all
+     * nuclides currently share one set of lambdas, so this only matters once per-nuclide data is added). The
+     * importance correction {@code beta_eff / beta} (~1.0-1.05 in a light water reactor) is not applied.
      *
-     * @param moleFractionByIsotope each isotope's mole fraction of the fuel (need not be pre-normalized to sum to
-     *                              1 -- normalized internally); every key must have {@link Element#crossSections}
-     *                              populated with delayed neutron data. See {@link
-     *                              com.windows2000.gtnuclear.api.nuclear.fuel.FuelComposition}'s own JavaDoc for
-     *                              why mole fraction is the physically appropriate weight here.
+     * @param fissionWeightByIsotope each nuclide's relative fission rate (any common scale -- normalized here);
+     *                               every key must have delayed neutron data, see
+     *                               {@link #accumulateFissionRates}
      */
     @NotNull
-    public static PointKineticsConstants fissionWeighted(@NotNull Map<Element, Double> moleFractionByIsotope,
+    public static PointKineticsConstants fissionWeighted(@NotNull Map<Element, Double> fissionWeightByIsotope,
                                                          double promptNeutronLifetime) {
-        if (moleFractionByIsotope.isEmpty()) {
-            throw new IllegalArgumentException("moleFractionByIsotope must not be empty");
+        if (fissionWeightByIsotope.isEmpty()) {
+            throw new IllegalArgumentException("fissionWeightByIsotope must not be empty");
         }
 
         int groupCount = -1;
-        double totalShare = 0.0;
-        for (Map.Entry<Element, Double> entry : moleFractionByIsotope.entrySet()) {
+        double totalWeight = 0.0;
+        for (Map.Entry<Element, Double> entry : fissionWeightByIsotope.entrySet()) {
             NeutronCrossSections crossSections = requireDelayedNeutronData(entry.getKey());
             if (groupCount == -1) {
                 groupCount = crossSections.delayedNeutronFractions.length;
@@ -87,51 +84,49 @@ public final class PointKineticsConstants {
                 throw new IllegalArgumentException(
                         "Mismatched delayed neutron group counts among contributing isotopes");
             }
-            totalShare += entry.getValue();
+            totalWeight += entry.getValue();
         }
+        if (!(totalWeight > 0)) throw new IllegalArgumentException("total fission weight must be positive");
 
         double[] fractions = new double[groupCount];
-        double[] decayConstants = new double[groupCount];
-        for (Map.Entry<Element, Double> entry : moleFractionByIsotope.entrySet()) {
+        double[] betaLambdaSums = new double[groupCount];
+        double[] plainLambdaSums = new double[groupCount];
+        for (Map.Entry<Element, Double> entry : fissionWeightByIsotope.entrySet()) {
             NeutronCrossSections crossSections = entry.getKey().crossSections;
-            double weight = entry.getValue() / totalShare;
+            double weight = entry.getValue() / totalWeight;
             for (int i = 0; i < groupCount; i++) {
-                fractions[i] += weight * crossSections.delayedNeutronFractions[i];
-                decayConstants[i] += weight * crossSections.delayedNeutronDecayConstants[i];
+                double weightedBeta = weight * crossSections.delayedNeutronFractions[i];
+                fractions[i] += weightedBeta;
+                betaLambdaSums[i] += weightedBeta * crossSections.delayedNeutronDecayConstants[i];
+                plainLambdaSums[i] += weight * crossSections.delayedNeutronDecayConstants[i];
             }
+        }
+        double[] decayConstants = new double[groupCount];
+        for (int i = 0; i < groupCount; i++) {
+            decayConstants[i] = fractions[i] > 0 ? betaLambdaSums[i] / fractions[i] : plainLambdaSums[i];
         }
 
         return new PointKineticsConstants(decayConstants, fractions, promptNeutronLifetime);
     }
 
     /**
-     * Combines every loaded fuel composition's own {@code moleFractionByIsotope} by simple summation (each
-     * composition weighted equally) -- a reasonable approximation pending calibration, same as every other
-     * "combine per-channel data into one reactor-wide value" simplification in this mod's physics wiring
-     * (2026-10-07, extracted from {@code MetaTileEntityPressurizedWaterReactor#aggregateFissionShares} as part
-     * of that class's own decomposition -- see this mod's design memory). Already had no reactor-multiblock
-     * dependency beyond reading each port's own composition before the move.
-     * <p>
-     * Isotopes with no delayed-neutron group data (zero-length {@code delayedNeutronFractions}, e.g. {@code
-     * GTNLElements#U236}/{@code Pu240} -- non-fissile neutron-capture "terminal poison" products {@code
-     * FuelBurnupEngine} accumulates in a rod's live inventory over time) are skipped here: {@link
-     * #fissionWeighted} requires every contributing isotope's group count to match, and these isotopes genuinely
-     * cannot fission or contribute delayed neutrons, so including them is never correct for this particular
-     * blend (unlike the CMFD shape solve, where their absorption cross section legitimately still matters as a
-     * poison -- this filtering is specific to the point-kinetics constants). Without this filter, burnup
-     * producing even a trace amount of U-236/Pu-240 would crash the next shape recompute (confirmed via a real
-     * playtest crash, 2026-09-22: {@code IllegalArgumentException: Mismatched delayed neutron group counts}).
+     * Adds one fuel region's fission rate per nuclide into {@code into}: {@code amount_k * (sigma_f,fast,k * phi_fast
+     * + sigma_f,thermal,k * phi_thermal)}, with the fluxes summed over the region's fuel nodes (stage 2-2). Units
+     * are arbitrary but must be consistent across calls (amounts per initial heavy-metal atom and CMFD-normalized
+     * fluxes are). Nuclides without delayed neutron data (e.g. U-236, Pu-240 -- they do not fission here) or without
+     * fission cross sections are skipped; see {@link #fissionWeighted}.
      */
-    @NotNull
-    public static Map<Element, Double> aggregateFissionShares(@NotNull Iterable<FuelComposition> compositions) {
-        Map<Element, Double> combined = new HashMap<>();
-        for (FuelComposition composition : compositions) {
-            for (Map.Entry<Element, Double> entry : composition.moleFractionByIsotope.entrySet()) {
-                if (!hasDelayedNeutronData(entry.getKey())) continue;
-                combined.merge(entry.getKey(), entry.getValue(), Double::sum);
-            }
+    public static void accumulateFissionRates(@NotNull Map<Element, Double> into,
+                                              @NotNull Map<Element, Double> amounts, double fastFluxSum,
+                                              double thermalFluxSum) {
+        for (Map.Entry<Element, Double> entry : amounts.entrySet()) {
+            Element element = entry.getKey();
+            if (!hasDelayedNeutronData(element) || entry.getValue() <= 0) continue;
+            NeutronCrossSections crossSections = element.crossSections;
+            double rate = entry.getValue() * (crossSections.fastFissionBarns * fastFluxSum +
+                    crossSections.thermalFissionBarns * thermalFluxSum);
+            if (rate > 0) into.merge(element, rate, Double::sum);
         }
-        return combined;
     }
 
     private static boolean hasDelayedNeutronData(@NotNull Element element) {

@@ -78,15 +78,26 @@ class RefuelingEvaluatorTest {
 
     @Test
     void holdReasons() {
-        assertNull(RefuelingEvaluator.holdReason(1.5, 1.0, 330, 1000, 1000, 2100, LIMITS));
-        assertEquals(HoldReason.COUNT_RATE_DOUBLED, RefuelingEvaluator.holdReason(2.0, 1.0, 330, 1000, 1000, 2100,
-                LIMITS));
-        assertEquals(HoldReason.COUNT_RATE_DOUBLED, RefuelingEvaluator.holdReason(Double.POSITIVE_INFINITY, 1.2, 330,
-                1000, 1000, 2100, LIMITS));
-        assertEquals(HoldReason.TEMPERATURE_HIGH, RefuelingEvaluator.holdReason(1.0, 1.0, 370, 1000, 1000, 2100,
-                LIMITS));
-        assertEquals(HoldReason.COOLANT_LOW, RefuelingEvaluator.holdReason(1.0, 1.0, 330, 999, 1000, 2100, LIMITS));
-        assertEquals(HoldReason.BORON_LOW, RefuelingEvaluator.holdReason(1.0, 1.0, 330, 1000, 1000, 1999, LIMITS));
+        // No population baseline (no source, no fuel): the computed multiplication stands in.
+        assertNull(RefuelingEvaluator.holdReason(0, 0, 1.5, 1.0, 330, 1000, 1000, 2100, LIMITS));
+        assertEquals(HoldReason.COUNT_RATE_DOUBLED,
+                RefuelingEvaluator.holdReason(0, 0, 2.0, 1.0, 330, 1000, 1000, 2100, LIMITS));
+        assertEquals(HoldReason.COUNT_RATE_DOUBLED, RefuelingEvaluator.holdReason(0, 0, Double.POSITIVE_INFINITY,
+                1.2, 330, 1000, 1000, 2100, LIMITS));
+        assertEquals(HoldReason.TEMPERATURE_HIGH,
+                RefuelingEvaluator.holdReason(0, 0, 1.0, 1.0, 370, 1000, 1000, 2100, LIMITS));
+        assertEquals(HoldReason.COOLANT_LOW,
+                RefuelingEvaluator.holdReason(0, 0, 1.0, 1.0, 330, 999, 1000, 2100, LIMITS));
+        assertEquals(HoldReason.BORON_LOW,
+                RefuelingEvaluator.holdReason(0, 0, 1.0, 1.0, 330, 1000, 1000, 1999, LIMITS));
+    }
+
+    @Test
+    void countRateDoublingUsesThePopulationWhenItHasABaseline() {
+        // Stage 2-1: the source-driven population is the count rate; M is ignored once a baseline exists.
+        assertNull(RefuelingEvaluator.holdReason(1.9e-10, 1.0e-10, 99.0, 1.0, 330, 1000, 1000, 2100, LIMITS));
+        assertEquals(HoldReason.COUNT_RATE_DOUBLED,
+                RefuelingEvaluator.holdReason(2.0e-10, 1.0e-10, 1.0, 1.0, 330, 1000, 1000, 2100, LIMITS));
     }
 
     @Test

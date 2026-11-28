@@ -72,6 +72,7 @@ item.gtnuclear.broken_control_rod.name=Broken Control Rod Cluster
 gtnuclear.assembly.tooltip.no_length=No length set (invalid item -- cannot be loaded)
 gtnuclear.assembly.tooltip.length=Length: %s
 gtnuclear.fuel_rod.tooltip.uranium=Uranium: %s
+gtnuclear.fuel_rod.tooltip.decay_heat=Decay Heat: %s kW
 gtnuclear.fuel_rod.tooltip.remaining=Fissile Capability Remaining: %s%%
 gtnuclear.fuel_rod.tooltip.replacement_recommended=Replacement Recommended
 gtnuclear.multiblock.heat_exchanger.primary_coolant=Primary Coolant: %s K, %s kg

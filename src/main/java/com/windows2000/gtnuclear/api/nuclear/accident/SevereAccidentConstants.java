@@ -13,6 +13,16 @@ public final class SevereAccidentConstants {
     public static final double FUEL_MELTING_TEMPERATURE_KELVIN = 3138.0;
 
     /**
+     * Fuel temperature (K) at which {@link SevereAccidentStage#UNCONTROLLED_HEATING} begins (2026-11-28, stage 2-3b,
+     * decision O2): 1477 K = 1204 degC (2200 F), the peak cladding temperature limit of the US ECCS acceptance
+     * criteria (10 CFR 50.46), where cladding oxidation and damage start. Compared against this mod's single lumped
+     * fuel temperature until stage 5 resolves it per node (then the hottest node should be used).
+     */
+    public static final double FUEL_DAMAGE_TEMPERATURE_KELVIN = 1477.0;
+    /** Fuel must cool this far below {@link #FUEL_DAMAGE_TEMPERATURE_KELVIN} to return to NORMAL (no melting yet). */
+    public static final double FUEL_DAMAGE_RECOVERY_HYSTERESIS_KELVIN = 100.0;
+
+    /**
      * Core melt fraction (0-1) at or above which {@link SevereAccidentStage#MELTDOWN} escalates to
      * {@link SevereAccidentStage#EXPLOSION} even without direct coolant contact.
      */

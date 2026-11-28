@@ -89,6 +89,17 @@ public abstract class MetaTileEntityReactorItemPort extends MetaTileEntityMultib
         inventory.deserializeNBT(data.getCompoundTag("Inventory"));
     }
 
+    /**
+     * Drops the inserted item when the port is broken (2026-11-28) -- GT only drops a machine's own
+     * importItems/exportItems, so before this a broken neutron source hatch or turbine rotor holder silently destroyed
+     * its source rod or rotor (the same bug fixed in {@code MetaTileEntityFuelAssemblyPort}).
+     */
+    @Override
+    public void clearMachineInventory(@NotNull List<@NotNull ItemStack> itemBuffer) {
+        super.clearMachineInventory(itemBuffer);
+        clearInventory(itemBuffer, inventory);
+    }
+
     @Override
     public ModularPanel buildUI(PosGuiData guiData, PanelSyncManager syncManager, UISettings settings) {
         return GTGuis.createPanel(this, 176, 166)

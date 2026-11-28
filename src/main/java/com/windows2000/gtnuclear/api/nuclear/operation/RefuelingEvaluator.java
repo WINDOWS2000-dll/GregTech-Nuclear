@@ -30,8 +30,11 @@ public final class RefuelingEvaluator {
         TEMPERATURE,
         /** (7) depressurized to atmospheric. */
         PRESSURE,
-        /** (8) subcritical long enough (decay heat proxy until stage 2). */
-        WAIT_TIME,
+        /**
+         * (8) core decay heat at or below the limit, as a fraction of the loaded fuel's nominal power (stage 2-3b,
+         * replacing the stage 1-4c "subcritical for 115 minutes" stand-in; a fresh core has none).
+         */
+        DECAY_HEAT,
         /** (9) coolant inventory at or above rated (cavity flood substitute). */
         COOLANT
     }
@@ -53,14 +56,11 @@ public final class RefuelingEvaluator {
 
     /** Limits, from config. */
     public record Limits(double shutdownPowerLevel, double minBoronPpm, double maxTemperatureKelvin,
-                         double maxPressureMPa, double minSubcriticalMinutes) {}
+                         double maxPressureMPa, double maxDecayHeatFraction) {}
 
-    /**
-     * Plant state for the checklist. {@code subcriticalMinutes} is {@link Double#POSITIVE_INFINITY} for a core
-     * that has never been critical (fresh fuel has no decay heat to wait out).
-     */
+    /** Plant state for the checklist; {@code decayHeatFraction} is decay heat / loaded fuel's nominal power. */
     public record Inputs(boolean shutdownStage, boolean allRodsInserted, double relativePower, double boronPpm,
-                         double temperatureKelvin, double pressureMPa, double subcriticalMinutes,
+                         double temperatureKelvin, double pressureMPa, double decayHeatFraction,
                          double coolantMassKg, double ratedCoolantMassKg) {}
 
     /** The multiplication ratio at or above which a hold is declared ("count rate doubling"). */
@@ -78,7 +78,7 @@ public final class RefuelingEvaluator {
         result.put(Condition.SHUTDOWN_MARGIN, Status.SUBSTITUTED);
         result.put(Condition.TEMPERATURE, status(in.temperatureKelvin() <= limits.maxTemperatureKelvin()));
         result.put(Condition.PRESSURE, status(in.pressureMPa() <= limits.maxPressureMPa()));
-        result.put(Condition.WAIT_TIME, status(in.subcriticalMinutes() >= limits.minSubcriticalMinutes()));
+        result.put(Condition.DECAY_HEAT, status(in.decayHeatFraction() <= limits.maxDecayHeatFraction()));
         result.put(Condition.COOLANT, status(in.coolantMassKg() >= in.ratedCoolantMassKg()));
         return result;
     }

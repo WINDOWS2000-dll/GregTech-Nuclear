@@ -16,12 +16,9 @@ import org.jetbrains.annotations.NotNull;
 public final class SevereAccidentProgressionTracker {
 
     /**
-     * {@code abnormalCoolingOrControl} combines the same LOCA/structural-damage signals SCRAM already reacts to
-     * plus void fraction exceeding a threshold -- SCRAM tripping does not by itself resolve an ongoing LOCA/void
-     * condition (decay heat continues after shutdown), so this check is deliberately independent of the
-     * reactor's own operating state, matching real accident progression. Melt progression itself (the melted
-     * fuel mass) already happens in the host's own thermal step; this method only advances the staging built on
-     * top of it.
+     * The stage follows the fuel itself (stage 2-3b, decision O2 -- see {@link SevereAccidentEvaluator}); melt
+     * progression (the melted fuel mass) happens in the host's own thermal step, and this method only advances the
+     * staging built on top of it, independent of the reactor's operating state (decay heat continues after a SCRAM).
      * <p>
      * Once melting has ever started ({@link AccidentHost#getMeltedFuelMassKg()} &gt; 0), the meltdown-fraction
      * denominator passed to {@link SevereAccidentEvaluator#advance} is the stable
@@ -33,18 +30,10 @@ public final class SevereAccidentProgressionTracker {
      */
     @NotNull
     public SevereAccidentState advance(@NotNull AccidentHost host, @NotNull SevereAccidentState current) {
-        double ratedCoolantMassKg = host.computeRatedCoolantMassKg();
-        boolean isLoca = LOCADetector.isLOCA(host.getCoolantMassKg(), ratedCoolantMassKg,
-                ConfigHolder.reactor.locaCoolantFraction);
-        boolean voidAbnormal = host.getPrimaryVoidFraction() > ConfigHolder.reactor.severeAccidentVoidFractionThreshold;
-        // Stage 1-2 (2026-11-21, see this mod's design memory, S3): loss of cooling/control can only heat a core
-        // that actually holds fuel AND currently produces heat. Without this gate, an empty reactor -- or a cold,
-        // fueled, zero-power reactor in the middle of its initial fill (still "LOCA" by inventory) -- was declared
-        // UNCONTROLLED_HEATING (confirmed via real playtest telemetry, 2026-09-29). Decay heat (stage 2) will plug
-        // into hasCoreHeatSource(), so a freshly SCRAMmed core that loses coolant still escalates as intended.
-        boolean heatGeneratingCore = host.computeTotalCoreFuelMassKg() > 0 && host.hasCoreHeatSource();
-        boolean abnormalCoolingOrControl = heatGeneratingCore &&
-                (isLoca || host.isHousingMismatch() || voidAbnormal);
+        // Stage 2-3b (2026-11-28, decision O2): the stage follows the fuel's own temperature and melting, so the old
+        // cause gate (LOCA / void / housing mismatch) and the stage 1-2 "heat-generating core" flag are gone -- an
+        // empty
+        // or cold core never heats, and a SCRAMmed core that loses cooling heats on its decay heat and escalates.
         // Stage 1-2 (2026-11-21, see this mod's design memory, S1): the previous "any coolant at all means molten
         // fuel/coolant contact" criterion escalated every MELTDOWN straight to EXPLOSION on the very next tick
         // whenever a single kilogram of coolant remained. Disabled until the severe-accident design is revisited
@@ -57,7 +46,7 @@ public final class SevereAccidentProgressionTracker {
         SevereAccidentConstants accidentConstants = new SevereAccidentConstants(
                 ConfigHolder.reactor.explosionMeltFractionThreshold,
                 ConfigHolder.reactor.explosionMagnitudeCoefficient);
-        return SevereAccidentEvaluator.advance(current, abnormalCoolingOrControl, host.getFuelTemperatureKelvin(),
+        return SevereAccidentEvaluator.advance(current, host.getFuelTemperatureKelvin(),
                 host.getMeltedFuelMassKg(), totalCoreFuelMassKgForEvaluator, coolantContactWithCorium,
                 accidentConstants);
     }

@@ -40,7 +40,7 @@ public final class ReactorTelemetryLogger implements AutoCloseable {
                 "ledgerTicks,eFissionJ,eRcpJ,eImportJ,eMakeupInJ,eExportJ,eMakeupOutJ,eStoredDeltaJ,eResidualJ," +
                 "eBandRoundingJ,fuelAssemblies,rodClusters,rcpRunning,rhrInService,rhrHeatRemovalW,rhrCoolingFlowKgPerS," +
                 "rhrCoolingOutletK,eRhrJ,eRhrPumpJ,operatingMode,multiplicationM,refuelingHold,refuelingHoldReason," +
-                "betaTotal,reactorPeriodS,sourceNeutronsPerS");
+                "betaTotal,reactorPeriodS,sourceNeutronsPerS,decayHeatW,decayHeatFraction,fuelNominalW,eDecayJ");
         writer.flush();
     }
 
@@ -76,7 +76,7 @@ public final class ReactorTelemetryLogger implements AutoCloseable {
         EnergyLedger<ReactorEnergyCategory> ledger = reactor.getEnergyLedger();
         writer.printf(
                 "%.2f,%s,%.6f,%.1f,%.1f,%.1f,%.1f,%.1f,%.2f,%.2f,%.2f,%.1f,%s,%.2f,%s,%s,%.1f,%.1f,%d,%d,%.9f,%s,%s,%.20e," +
-                        "%d,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%d,%d,%s,%s,%.6e,%.2f,%.1f,%.6e,%.6e,%d,%.4f,%s,%s,%.6f,%.4e,%.4e%n",
+                        "%d,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%.6e,%d,%d,%s,%s,%.6e,%.2f,%.1f,%.6e,%.6e,%d,%.4f,%s,%s,%.6f,%.4e,%.4e,%.6e,%.6e,%.6e,%.6e%n",
                 elapsedSeconds,
                 reactor.getOperatingState().stage,
                 reactor.getRelativeNeutronPopulation(),
@@ -126,7 +126,11 @@ public final class ReactorTelemetryLogger implements AutoCloseable {
                 reactor.getRefuelingHoldReason() != null ? reactor.getRefuelingHoldReason().name() : "NONE",
                 reactor.getDelayedNeutronFraction(),
                 reactor.getReactorPeriodSeconds(),
-                reactor.getSourceNeutronsPerSecond());
+                reactor.getSourceNeutronsPerSecond(),
+                reactor.getDecayHeatWatts(),
+                reactor.decayHeatFraction(),
+                reactor.getFuelNominalPowerWatts(),
+                ledger.get(ReactorEnergyCategory.DECAY));
         writer.flush();
     }
 

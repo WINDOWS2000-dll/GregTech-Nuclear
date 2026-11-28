@@ -254,7 +254,8 @@ public class MetaTileEntityConsoleScreen extends MetaTileEntityMultiblockPart
         for (String line : lines) {
             int color = line.contains("MISMATCH") || line.startsWith("SCRAM") || line.startsWith("BREACH") ||
                     line.contains("WARNING") || line.contains("ISOLATED") || line.contains("REFUSED") ||
-                    line.contains("NO POWER") || line.contains("NO COOLING") || line.contains("HOLD") ?
+                    line.contains("NO POWER") || line.contains("NO COOLING") || line.contains("HOLD") ||
+                    line.startsWith("ALARM") ?
                             COLOR_WARNING : COLOR_TEXT;
             renderTextOnPanel(aLeft + padding, b, color, line, textScale);
             b += 0.06f * textScale;
@@ -339,12 +340,35 @@ public class MetaTileEntityConsoleScreen extends MetaTileEntityMultiblockPart
         if (reactor.isAutoRodControlActive()) {
             lines.add("AUTO CONTROL: ON");
         }
+        // Stage 2-3b: decay heat, and the causes that used to gate the severe accident stage (decision O2) as alarms.
+        if (reactor.getFuelNominalPowerWatts() > 0) {
+            lines.add(String.format("DECAY HEAT: %.1f MW (%.2f%%)", reactor.getDecayHeatWatts() / 1.0e6,
+                    reactor.decayHeatFraction() * 100.0));
+            if (reactor.getCoolantMassKg() <
+                    ConfigHolder.reactor.locaCoolantFraction * reactor.getRatedCoolantMassKg()) {
+                lines.add("ALARM: LOSS OF COOLANT");
+            }
+            if (reactor.getPrimaryVoidFraction() > ConfigHolder.reactor.severeAccidentVoidFractionThreshold) {
+                lines.add(String.format("ALARM: CORE VOID %.0f%%", reactor.getPrimaryVoidFraction() * 100.0));
+            }
+            // About cooling a shut-down core: a critical core's own fission heat already shows as POWER.
+            if (!reactor.isRcpRunning() && !reactor.isRhrInService() &&
+                    reactor.decayHeatFraction() > CORE_COOLING_ALARM_DECAY_FRACTION) {
+                lines.add("ALARM: NO CORE COOLING");
+            }
+        }
         if (reactor.getSevereAccidentState().stage != SevereAccidentStage.NORMAL) {
             lines.add("!! " + reactor.getSevereAccidentState().stage + ": " +
                     String.format("%.0f", reactor.getSevereAccidentState().coreMeltFraction * 100.0) + "% !!");
         }
         return lines;
     }
+
+    /**
+     * Decay heat fraction of the loaded fuel's nominal power above which having neither the reactor coolant pumps nor
+     * RHR running raises the NO CORE COOLING alarm (stage 2-3b): 0.05% heats a dry core to fuel damage in hours.
+     */
+    private static final double CORE_COOLING_ALARM_DECAY_FRACTION = 5.0e-4;
 
     /** Real PWR Technical Specification mode names (stage 1-4c). */
     @NotNull

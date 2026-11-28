@@ -13,6 +13,11 @@ public enum ReactorEnergyCategory implements EnergyLedger.Category {
 
     /** Fission heat deposited in the fuel. */
     FISSION(EnergyLedger.Kind.INFLOW),
+    /**
+     * Fission product decay heat deposited in the fuel (stage 2-3b). Since then {@link #FISSION} is only the prompt
+     * share, {@code (1 - f_d)} of fission power.
+     */
+    DECAY(EnergyLedger.Kind.INFLOW),
     /** Reactor coolant pump heat deposited in the coolant. */
     RCP(EnergyLedger.Kind.INFLOW),
     /** Returning primary coolant drained from the coolant import hatch(es), at its fluid band temperature. */

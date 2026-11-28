@@ -93,14 +93,26 @@ class FuelAssemblyStateTest {
     }
 
     @Test
-    void restoreResetsPoisonsOnVersionChangeButKeepsComposition() {
+    void olderVersionKeepsPoisonsButStartsDecayHeatFresh() {
+        // Version 1 -> 2 only defined decay heat; xenon must survive (see POISONS_UNCHANGED_SINCE_VERSION).
         FuelAssemblyState original = FuelAssemblyState.fresh(2, leu());
         original.setLayerComposition(0, Map.of("U235", 0.03, "U238", 0.96));
         original.setPoison(0, FuelAssemblyState.POISON_XENON, 0.5);
 
-        FuelAssemblyState restored = FuelAssemblyState.restore(2, FuelAssemblyState.CURRENT_VERSION - 1,
-                original.nuclides(), original.compositionArray(), original.poisonArray(), new double[0], 0, leu());
+        FuelAssemblyState restored = FuelAssemblyState.restore(2, FuelAssemblyState.POISONS_UNCHANGED_SINCE_VERSION,
+                original.nuclides(), original.compositionArray(), original.poisonArray(), new double[2 * 23], 23,
+                leu());
         assertEquals(0.03, restored.layerComposition(0).get("U235"), EPS);
+        assertEquals(0.5, restored.poison(0, FuelAssemblyState.POISON_XENON), EPS);
+        assertEquals(0, restored.decayHeatGroups());
+    }
+
+    @Test
+    void unknownVersionResetsPoisons() {
+        FuelAssemblyState original = FuelAssemblyState.fresh(2, leu());
+        original.setPoison(0, FuelAssemblyState.POISON_XENON, 0.5);
+        FuelAssemblyState restored = FuelAssemblyState.restore(2, 0, original.nuclides(),
+                original.compositionArray(), original.poisonArray(), new double[0], 0, leu());
         assertEquals(0.0, restored.poison(0, FuelAssemblyState.POISON_XENON), EPS);
     }
 }

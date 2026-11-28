@@ -34,6 +34,7 @@ import com.cleanroommc.modularui.widgets.ProgressWidget;
 import com.cleanroommc.modularui.widgets.TextWidget;
 import com.cleanroommc.modularui.widgets.slot.ItemSlot;
 import com.windows2000.gtnuclear.api.metatileentity.multiblock.GTNLMultiblockAbility;
+import com.windows2000.gtnuclear.api.nuclear.decay.DecayHeat;
 import com.windows2000.gtnuclear.api.nuclear.fuel.FuelAssemblyState;
 import com.windows2000.gtnuclear.api.nuclear.fuel.FuelComposition;
 import com.windows2000.gtnuclear.api.nuclear.neutronics.XenonIodineState;
@@ -195,8 +196,44 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
             cachedFuelStateDirty = false;
             NBTTagCompound tag = stack.getTagCompound();
             cachedPoisonsInitialized = tag != null && tag.hasKey("Composition");
+            layerPowerShares = null;
+            // Stage 2-3b: the decay heat groups kept decaying since the state was last written (out of the core,
+            // or while this chunk was unloaded) -- catch up with the world time elapsed.
+            if (cachedFuelState != null && getWorld() != null) {
+                long elapsedTicks = getWorld().getTotalWorldTime() - ItemFuelRod.getStateWorldTick(stack,
+                        getWorld().getTotalWorldTime());
+                if (elapsedTicks > 0) {
+                    DecayHeat.decayOnly(cachedFuelState.decayHeatData(DecayHeat.GROUP_COUNT), elapsedTicks / 20.0,
+                            ConfigHolder.reactor.slowClockCompression);
+                    cachedFuelStateDirty = true;
+                }
+            }
         }
         return cachedFuelState;
+    }
+
+    /**
+     * Each fuel layer's share of the core's fission power, from the last CMFD shape (stage 2-3b) -- set by the
+     * reactor; {@code null} until the first shape that includes this assembly.
+     */
+    @Nullable
+    private double[] layerPowerShares;
+
+    @Nullable
+    public double[] getLayerPowerShares() {
+        return layerPowerShares;
+    }
+
+    public void setLayerPowerShares(@Nullable double[] shares) {
+        this.layerPowerShares = shares;
+    }
+
+    /** The loaded assembly's current decay heat (W), 0 without fuel. */
+    public double getDecayHeatWatts() {
+        FuelAssemblyState state = getFuelState();
+        if (state == null) return 0.0;
+        return DecayHeat.totalPower(state.decayHeatData(DecayHeat.GROUP_COUNT),
+                ConfigHolder.reactor.slowClockCompression);
     }
 
     /** Writes the in-memory state back into the item, if it changed. Cheap when nothing changed. */
@@ -205,11 +242,13 @@ public class MetaTileEntityFuelAssemblyPort extends MetaTileEntityMultiblockNoti
         ItemStack stack = getFuelStack();
         if (stack != cachedFuelStack || !(stack.getItem() instanceof ItemFuelRod fuelRod)) return;
         fuelRod.setState(stack, cachedFuelState);
+        if (getWorld() != null) ItemFuelRod.setStateWorldTick(stack, getWorld().getTotalWorldTime());
         cachedFuelStateDirty = false;
         markDirty();
     }
 
-    private void markFuelStateDirty() {
+    /** Called by whoever changed the in-memory state (this port, or the reactor's decay heat step). */
+    public void markFuelStateDirty() {
         cachedFuelStateDirty = true;
     }
 

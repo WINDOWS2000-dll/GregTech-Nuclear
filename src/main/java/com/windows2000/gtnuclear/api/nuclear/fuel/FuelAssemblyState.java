@@ -27,8 +27,19 @@ import java.util.Map;
  */
 public final class FuelAssemblyState {
 
-    /** Bump whenever the meaning of {@link #poisons} or {@link #decayHeat} changes. */
-    public static final int CURRENT_VERSION = 1;
+    /**
+     * Bump whenever the meaning of {@link #poisons} or {@link #decayHeat} changes. 2 (2026-11-28, stage 2-3b): decay
+     * heat defined as the ANS-5.1 groups' remaining energy (J) per layer, {@code DecayHeat.GROUP_COUNT} per layer --
+     * version-1 items keep their composition and xenon (see {@link #POISONS_UNCHANGED_SINCE_VERSION}) and start decay
+     * heat from zero.
+     */
+    public static final int CURRENT_VERSION = 2;
+    /**
+     * Oldest version whose poisons still mean what they mean now -- poisons have not changed since version 1, so a
+     * version-1 item keeps its xenon when it gains decay heat (resetting it would drop ~2800 pcm of equilibrium xenon
+     * from a running core at load, a prompt critical excursion).
+     */
+    public static final int POISONS_UNCHANGED_SINCE_VERSION = 1;
 
     public static final int POISON_IODINE = 0;
     public static final int POISON_XENON = 1;
@@ -38,8 +49,8 @@ public final class FuelAssemblyState {
     private final List<String> nuclides;
     private double[] composition;
     private final double[] poisons;
-    private final double[] decayHeat;
-    private final int decayHeatGroups;
+    private double[] decayHeat;
+    private int decayHeatGroups;
 
     private FuelAssemblyState(int length, @NotNull List<String> nuclides, @NotNull double[] composition,
                               @NotNull double[] poisons, @NotNull double[] decayHeat, int decayHeatGroups) {
@@ -80,7 +91,8 @@ public final class FuelAssemblyState {
             return fresh(Math.max(length, 1), freshFractions);
         }
         boolean sameVersion = version == CURRENT_VERSION;
-        double[] restoredPoisons = sameVersion && poisons.length == length * POISON_COUNT ? poisons.clone() :
+        boolean poisonsCompatible = version >= POISONS_UNCHANGED_SINCE_VERSION && version <= CURRENT_VERSION;
+        double[] restoredPoisons = poisonsCompatible && poisons.length == length * POISON_COUNT ? poisons.clone() :
                 new double[length * POISON_COUNT];
         boolean decayValid = sameVersion && decayHeatGroups >= 0 && decayHeat.length == length * decayHeatGroups;
         return new FuelAssemblyState(length, new ArrayList<>(nuclides), composition.clone(), restoredPoisons,
@@ -113,6 +125,20 @@ public final class FuelAssemblyState {
 
     public int decayHeatGroups() {
         return decayHeatGroups;
+    }
+
+    /**
+     * The live decay heat array ({@code length * groups}, layer-major), allocated as zeros the first time a model
+     * with this group count asks for it (stage 2-3b). Mutated in place by the decay heat stepper for speed -- a
+     * deliberate exception to this class's copy-on-read getters.
+     */
+    @NotNull
+    public double[] decayHeatData(int groups) {
+        if (decayHeatGroups != groups || decayHeat.length != length * groups) {
+            decayHeat = new double[length * groups];
+            decayHeatGroups = groups;
+        }
+        return decayHeat;
     }
 
     /** One layer's composition ({@code n_k} by symbol). */

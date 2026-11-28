@@ -18,6 +18,7 @@ import net.minecraft.util.text.TextFormatting;
 import net.minecraft.world.World;
 import net.minecraftforge.common.util.Constants;
 
+import com.windows2000.gtnuclear.api.nuclear.decay.DecayHeat;
 import com.windows2000.gtnuclear.api.nuclear.fuel.FuelAssemblyState;
 import com.windows2000.gtnuclear.api.nuclear.fuel.FuelComposition;
 import com.windows2000.gtnuclear.api.nuclear.fuel.PackedDoubles;
@@ -135,6 +136,33 @@ public class ItemFuelRod extends Item implements ITintedItem {
         // Decay heat groups are saved single precision (stage 2-3a, decision F1 -- see PackedDoubles#packFloats).
         tag.setTag(NBT_DECAY_HEAT, new NBTTagIntArray(PackedDoubles.packFloats(state.decayHeatArray())));
         tag.setInteger(NBT_DECAY_HEAT_GROUPS, state.decayHeatGroups());
+    }
+
+    /**
+     * World time (ticks) the saved state was valid at (stage 2-3b) -- written whenever the reactor port writes the
+     * state back, so decay heat can catch up with the time spent out of the core (or in an unloaded chunk).
+     */
+    private static final String NBT_STATE_WORLD_TICK = "StateWorldTick";
+
+    /** @return the saved state's world tick, or {@code fallback} if none was recorded */
+    public static long getStateWorldTick(@NotNull ItemStack stack, long fallback) {
+        NBTTagCompound tag = stack.getTagCompound();
+        return tag != null && tag.hasKey(NBT_STATE_WORLD_TICK) ? tag.getLong(NBT_STATE_WORLD_TICK) : fallback;
+    }
+
+    public static void setStateWorldTick(@NotNull ItemStack stack, long worldTick) {
+        if (!stack.hasTagCompound()) stack.setTagCompound(new NBTTagCompound());
+        stack.getTagCompound().setLong(NBT_STATE_WORLD_TICK, worldTick);
+    }
+
+    /** Current decay heat (W) of a stack outside any port, caught up to {@code worldTick}. */
+    public double decayHeatWattsAt(@NotNull ItemStack stack, long worldTick) {
+        FuelAssemblyState state = getState(stack);
+        if (state == null || state.decayHeatGroups() != DecayHeat.GROUP_COUNT) return 0.0;
+        double[] energies = state.decayHeatData(DecayHeat.GROUP_COUNT);
+        long elapsed = worldTick - getStateWorldTick(stack, worldTick);
+        if (elapsed > 0) DecayHeat.decayOnly(energies, elapsed / 20.0, ConfigHolder.reactor.slowClockCompression);
+        return DecayHeat.totalPower(energies, ConfigHolder.reactor.slowClockCompression);
     }
 
     @NotNull
@@ -320,6 +348,14 @@ public class ItemFuelRod extends Item implements ITintedItem {
         TextFormatting color = remaining < REPLACEMENT_RECOMMENDED_THRESHOLD ? TextFormatting.RED :
                 remaining < 0.5 ? TextFormatting.YELLOW : TextFormatting.GREEN;
         tooltip.add(color + I18n.format("gtnuclear.fuel_rod.tooltip.remaining", Math.round(remaining * 100)));
+        // Stage 2-3b: decay heat, caught up to the viewer's world time (out-of-core heating effects: roadmap J).
+        if (world != null) {
+            double decayWatts = decayHeatWattsAt(stack, world.getTotalWorldTime());
+            if (decayWatts > 0.5) {
+                tooltip.add(TextFormatting.GOLD + I18n.format("gtnuclear.fuel_rod.tooltip.decay_heat",
+                        String.format("%.1f", decayWatts / 1000.0)));
+            }
+        }
         if (remaining < REPLACEMENT_RECOMMENDED_THRESHOLD) {
             tooltip.add(TextFormatting.RED + "" + TextFormatting.ITALIC +
                     I18n.format("gtnuclear.fuel_rod.tooltip.replacement_recommended"));

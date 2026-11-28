@@ -46,6 +46,8 @@ import com.windows2000.gtnuclear.api.nuclear.accident.SevereAccidentProgressionT
 import com.windows2000.gtnuclear.api.nuclear.accident.SevereAccidentStage;
 import com.windows2000.gtnuclear.api.nuclear.accident.SevereAccidentState;
 import com.windows2000.gtnuclear.api.nuclear.decay.DecayEngine;
+import com.windows2000.gtnuclear.api.nuclear.decay.DecayHeat;
+import com.windows2000.gtnuclear.api.nuclear.fuel.FuelAssemblyState;
 import com.windows2000.gtnuclear.api.nuclear.fuel.FuelBurnupEngine;
 import com.windows2000.gtnuclear.api.nuclear.fuel.FuelComposition;
 import com.windows2000.gtnuclear.api.nuclear.neutronics.BoronReactivity;
@@ -580,12 +582,6 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     private double pressureMPa = ATMOSPHERIC_PRESSURE_MPA;
     private static final double ATMOSPHERIC_PRESSURE_MPA = WaterSaturationCurve.ATMOSPHERIC_PRESSURE_PASCALS / 1.0e6;
     /**
-     * Relative neutron population at or above which the core counts as an active heat source for
-     * {@link #hasCoreHeatSource()} (stage 1-2, 2026-11-21) -- a provisional 0.01% of rated, to be replaced by a
-     * fission + decay heat power threshold once decay heat exists (stage 2).
-     */
-    private static final double CORE_HEAT_SOURCE_RELATIVE_POWER_THRESHOLD = 1.0e-4;
-    /**
      * Whether the console's "begin pressurization" command is currently active -- provisional (stage 3 of this
      * mod's startup/shutdown sequence work, 2026-09-21) pending the secondary coolant loop design, see
      * {@code ConfigHolder.reactor.targetOperatingPressureMPa}'s own comment. Mutually exclusive with
@@ -621,12 +617,6 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
      * reference since stage 2-1 gave subcritical cores a real source-driven population.
      */
     private double refuelingBaselinePopulation = 0.0;
-    /** Whether this reactor has ever been above the shutdown level (fresh cores skip the decay wait). */
-    private boolean everCritical = false;
-    /** World time (ticks) when the reactor was last at or above the shutdown level -- see condition (8). */
-    private long subcriticalSinceWorldTick = 0L;
-    /** Sentinel: not known yet (a world saved before stage 1-4c); set on the first tick. */
-    private static final long UNKNOWN_SUBCRITICAL_SINCE = Long.MIN_VALUE;
     // Display-only (synced, not persisted).
     private double subcriticalMultiplication = 1.0;
     private int operatingMode = 5;
@@ -690,14 +680,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
     private RefuelingEvaluator.Limits refuelingLimits() {
         return new RefuelingEvaluator.Limits(ConfigHolder.reactor.shutdownCompletePowerThreshold,
                 ConfigHolder.reactor.refuelingMinBoronPpm, ConfigHolder.reactor.refuelingMaxTemperatureKelvin,
-                ATMOSPHERIC_PRESSURE_MPA + 0.001, ConfigHolder.reactor.refuelingMinSubcriticalMinutes);
-    }
-
-    /** Minutes since the reactor was last at or above the shutdown level; infinite for a never-critical core. */
-    private double subcriticalMinutes() {
-        if (!everCritical || getWorld() == null) return Double.POSITIVE_INFINITY;
-        if (subcriticalSinceWorldTick == UNKNOWN_SUBCRITICAL_SINCE) return 0.0;
-        return Math.max(0L, getWorld().getTotalWorldTime() - subcriticalSinceWorldTick) / 20.0 / 60.0;
+                ATMOSPHERIC_PRESSURE_MPA + 0.001, ConfigHolder.reactor.refuelingMaxDecayHeatFraction);
     }
 
     private boolean allRodDrivesInserted() {
@@ -712,25 +695,11 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         return RefuelingEvaluator.checklist(new RefuelingEvaluator.Inputs(
                 operatingState.stage == ReactorOperatingStage.SHUTDOWN, allRodDrivesInserted(),
                 pointKineticsState.relativeNeutronPopulation, boronPpm, temperatureKelvin, pressureMPa,
-                subcriticalMinutes(), coolantMassKg, computeRatedCoolantMassKg()), refuelingLimits());
+                decayHeatFraction(), coolantMassKg, computeRatedCoolantMassKg()), refuelingLimits());
     }
 
     private double currentMultiplication() {
         return RefuelingEvaluator.multiplication(totalReactivity, pointKineticsConstants != null);
-    }
-
-    /** Condition (8)'s clock: world time, so decay "continues" while this reactor is unformed or unloaded. */
-    private void updateSubcriticalClock() {
-        if (getWorld() == null) return;
-        if (subcriticalSinceWorldTick == UNKNOWN_SUBCRITICAL_SINCE) {
-            subcriticalSinceWorldTick = getWorld().getTotalWorldTime();
-            markDirty();
-        }
-        if (pointKineticsState.relativeNeutronPopulation >= ConfigHolder.reactor.shutdownCompletePowerThreshold) {
-            if (!everCritical) markDirty();
-            everCritical = true;
-            subcriticalSinceWorldTick = getWorld().getTotalWorldTime();
-        }
     }
 
     /** Per tick: rod drives held in, the automatic hold, and the console's checklist/mode display. */
@@ -775,8 +744,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
             case SHUTDOWN_MARGIN -> "SHUTDOWN MARGIN";
             case TEMPERATURE -> String.format("TEMP %.0f/%.0f K", temperatureKelvin, limits.maxTemperatureKelvin());
             case PRESSURE -> String.format("PRESS %.2f/%.2f MPa", pressureMPa, limits.maxPressureMPa());
-            case WAIT_TIME -> String.format("WAIT %.0f/%.0f min", subcriticalMinutes(),
-                    limits.minSubcriticalMinutes());
+            case DECAY_HEAT -> String.format("DECAY %.2f/%.2f %%", decayHeatFraction() * 100.0,
+                    limits.maxDecayHeatFraction() * 100.0);
             case COOLANT -> String.format("COOLANT %.0f/%.0f mb", coolantMassKg * 1000.0,
                     computeRatedCoolantMassKg() * 1000.0);
         };
@@ -1161,10 +1130,92 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         return coreFuelMassAtMeltdownStartKg;
     }
 
-    /** {@link AccidentHost#hasCoreHeatSource()} -- see {@link #CORE_HEAT_SOURCE_RELATIVE_POWER_THRESHOLD}. */
-    @Override
-    public boolean hasCoreHeatSource() {
-        return pointKineticsState.relativeNeutronPopulation >= CORE_HEAT_SOURCE_RELATIVE_POWER_THRESHOLD;
+    // ---------------------------------------------------------------- decay heat (stage 2-3b, 2026-11-28)
+
+    /** Core decay heat (W) at the end of the last tick, client-synced. */
+    private double decayHeatWatts = 0.0;
+    /** Nominal power (W) of the loaded fuel -- fuel layers x fuelNodeNominalPowerWatts -- client-synced. */
+    private double fuelNominalPowerWatts = 0.0;
+    @Nullable
+    private DecayHeat.Stepper decayHeatStepper;
+    private double decayHeatStepperCompression = Double.NaN;
+
+    public double getDecayHeatWatts() {
+        return decayHeatWatts;
+    }
+
+    public double getFuelNominalPowerWatts() {
+        return fuelNominalPowerWatts;
+    }
+
+    /** Decay heat as a fraction of the loaded fuel's nominal power (0 without fuel). */
+    public double decayHeatFraction() {
+        return fuelNominalPowerWatts > 0 ? decayHeatWatts / fuelNominalPowerWatts : 0.0;
+    }
+
+    /**
+     * Advances every loaded assembly's decay heat groups one tick (per layer, fed by that layer's share of this
+     * tick's fission power from the last CMFD shape), and sums the core's decay heat -- see {@link DecayHeat}.
+     */
+    private void updateDecayHeat() {
+        double compression = ConfigHolder.reactor.slowClockCompression;
+        if (decayHeatStepper == null || decayHeatStepperCompression != compression) {
+            decayHeatStepper = new DecayHeat.Stepper(TICK_SECONDS, compression);
+            decayHeatStepperCompression = compression;
+        }
+        double fissionWatts = computeRatedThermalPowerWatts() * pointKineticsState.relativeNeutronPopulation;
+        double total = 0.0;
+        double nominal = 0.0;
+        int height = getChannelHeightLayers();
+        for (MetaTileEntityFuelAssemblyPort port : cachedFuelPorts) {
+            FuelAssemblyState state = port.getFuelState();
+            if (state == null) continue;
+            nominal += Math.min(state.length(), height) * ConfigHolder.reactor.fuelNodeNominalPowerWatts;
+            double[] energies = state.decayHeatData(DecayHeat.GROUP_COUNT);
+            double[] shares = port.getLayerPowerShares();
+            for (int layer = 0; layer < state.length(); layer++) {
+                double share = shares != null && layer < shares.length ? shares[layer] : 0.0;
+                total += decayHeatStepper.advance(energies, layer * DecayHeat.GROUP_COUNT, fissionWatts * share);
+            }
+            port.markFuelStateDirty();
+        }
+        decayHeatWatts = total;
+        fuelNominalPowerWatts = nominal;
+    }
+
+    /**
+     * Every fuel layer's share of the core's fission source in the current CMFD shape (stage 2-3b), handed to its
+     * port: {@code nuSigma_f,fast * phi_fast + nuSigma_f,thermal * phi_thermal} of each fuel node over the core total.
+     */
+    private void updateLayerPowerShares() {
+        List<double[]> perPort = new ArrayList<>();
+        double total = 0.0;
+        for (MetaTileEntityFuelAssemblyPort port : cachedFuelPorts) {
+            FuelComposition composition = port.getLoadedComposition();
+            if (cmfdResult == null || composition == null) {
+                perPort.add(null);
+                continue;
+            }
+            NodePosition top = fuelPortTopPosition(port);
+            ReactorNode node = ReactorNodeFactory.fuelNode(top, composition);
+            int layers = top.y() - CHANNEL_BOTTOM_Y_RELATIVE + 1;
+            double[] sources = new double[layers];
+            for (int layer = 0; layer < layers; layer++) {
+                NodePosition position = new NodePosition(top.x(), CHANNEL_BOTTOM_Y_RELATIVE + layer, top.z());
+                double source = node.fast().nuFission() * cmfdResult.fastFlux().getOrDefault(position, 0.0) +
+                        node.thermal().nuFission() * cmfdResult.thermalFlux().getOrDefault(position, 0.0);
+                sources[layer] = Math.max(0.0, source);
+                total += sources[layer];
+            }
+            perPort.add(sources);
+        }
+        for (int i = 0; i < cachedFuelPorts.size(); i++) {
+            double[] sources = perPort.get(i);
+            if (sources != null && total > 0) {
+                for (int layer = 0; layer < sources.length; layer++) sources[layer] /= total;
+            }
+            cachedFuelPorts.get(i).setLayerPowerShares(sources != null && total > 0 ? sources : null);
+        }
     }
 
     /**
@@ -1517,6 +1568,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         pointKineticsConstants = fissionRates.isEmpty() ? null :
                 PointKineticsConstants.fissionWeighted(fissionRates,
                         PointKineticsConstants.STANDARD_PROMPT_NEUTRON_LIFETIME);
+        updateLayerPowerShares();
         // Stage 2-1: a real source term replaces the old one-off "seed" -- see NeutronSourceStrength.
         sourceNeutronsPerSecond = computeSourceNeutronsPerSecond();
         neutronSourceRate = NeutronSourceStrength.relativeRate(sourceNeutronsPerSecond,
@@ -2022,10 +2074,14 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         // "zero heat capacity is excluded" guards in both those call sites work as originally intended.
         if (coolantMassKg < 1.0e-6) coolantMassKg = 0.0;
 
-        double fissionPowerWatts = computeRatedThermalPowerWatts() * pointKineticsState.relativeNeutronPopulation;
+        // Stage 2-3b (decision 1): only (1 - f_d) of fission energy is deposited promptly; the rest arrives later as
+        // decay heat from the fission product groups (DecayHeat), so long rated operation still totals 100%.
+        double fuelHeatWatts = computeRatedThermalPowerWatts() * pointKineticsState.relativeNeutronPopulation *
+                (1.0 - DecayHeat.EQUILIBRIUM_FRACTION) + decayHeatWatts;
         double rcpHeatWatts = updateReactorPowerConsumption();
         double rhrNetWatts = updateResidualHeatRemoval();
-        energyLedger.add(ReactorEnergyCategory.FISSION, fissionPowerWatts * TICK_SECONDS);
+        energyLedger.add(ReactorEnergyCategory.FISSION, (fuelHeatWatts - decayHeatWatts) * TICK_SECONDS);
+        energyLedger.add(ReactorEnergyCategory.DECAY, decayHeatWatts * TICK_SECONDS);
         energyLedger.add(ReactorEnergyCategory.RCP, rcpHeatWatts * TICK_SECONDS);
         double totalFuelMassKg = computeTotalCoreFuelMassKg();
         double fuelHeatCapacity = totalFuelMassKg * FuelThermalConstants.SPECIFIC_HEAT_CAPACITY_J_PER_KG_KELVIN;
@@ -2038,7 +2094,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         for (int i = 0; i < subSteps; i++) {
             double transferWatts = fuelCoolantUA * (fuelTemperatureKelvin - temperatureKelvin);
             FuelTemperatureStep.Result step = FuelTemperatureStep.advance(fuelTemperatureKelvin, meltedFuelMassKg,
-                    coreFuelMassAtMeltdownStartKg, fissionPowerWatts, transferWatts, totalFuelMassKg,
+                    coreFuelMassAtMeltdownStartKg, fuelHeatWatts, transferWatts, totalFuelMassKg,
                     fuelHeatCapacity, subDtSeconds);
             fuelTemperatureKelvin = step.fuelTemperatureKelvin();
             meltedFuelMassKg = step.meltedFuelMassKg();
@@ -2817,6 +2873,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         buf.writeDouble(reactorPeriodSeconds);
         buf.writeDouble(displayDelayedNeutronFraction);
         buf.writeDouble(sourceNeutronsPerSecond);
+        buf.writeDouble(decayHeatWatts);
+        buf.writeDouble(fuelNominalPowerWatts);
         buf.writeDouble(pointKineticsState.relativeNeutronPopulation);
         buf.writeDouble(totalReactivity);
         buf.writeDouble(shapeReactivityPcm);
@@ -2892,6 +2950,8 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         reactorPeriodSeconds = buf.readDouble();
         displayDelayedNeutronFraction = buf.readDouble();
         sourceNeutronsPerSecond = buf.readDouble();
+        decayHeatWatts = buf.readDouble();
+        fuelNominalPowerWatts = buf.readDouble();
         // Display-only on the client: just enough of each state to back this class's own getters, not a full
         // reconstruction (the client never runs updatePhysicsAmplitude() itself, so precursor/iodine detail is
         // never needed here).
@@ -2979,8 +3039,6 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         if (refuelingHoldReason != null) data.setString("RefuelingHoldReason", refuelingHoldReason.name());
         data.setDouble("RefuelingBaselineM", refuelingBaselineMultiplication);
         data.setDouble("RefuelingBaselinePopulation", refuelingBaselinePopulation);
-        data.setBoolean("EverCritical", everCritical);
-        data.setLong("SubcriticalSinceWorldTick", subcriticalSinceWorldTick);
         return data;
     }
 
@@ -3028,12 +3086,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
                 RefuelingEvaluator.HoldReason.valueOf(data.getString("RefuelingHoldReason")) : null;
         refuelingBaselineMultiplication = data.hasKey("RefuelingBaselineM") ? data.getDouble("RefuelingBaselineM") :
                 1.0;
-        // Worlds saved before stage 1-4c: assume the core has operated and start the wait at the first tick after
-        // loading (the safe side) -- see updateSubcriticalClock().
-        everCritical = !data.hasKey("EverCritical") || data.getBoolean("EverCritical");
         refuelingBaselinePopulation = data.getDouble("RefuelingBaselinePopulation");
-        subcriticalSinceWorldTick = data.hasKey("SubcriticalSinceWorldTick") ?
-                data.getLong("SubcriticalSinceWorldTick") : UNKNOWN_SUBCRITICAL_SINCE;
     }
 
     public MetaTileEntityPressurizedWaterReactor(ResourceLocation metaTileEntityId) {
@@ -3080,6 +3133,7 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         updatePhysicsShape();
         updatePhysicsAmplitude();
         updateFuelBurnup();
+        updateDecayHeat();
         updateControlRodWear();
         updateFuelAndCoolantThermal();
         updateCoolantInjection();
@@ -3091,7 +3145,6 @@ public class MetaTileEntityPressurizedWaterReactor extends MultiblockWithDisplay
         updateCoreMapCells();
         updateControlRodSummaries();
         updateSyncedCoreSummary();
-        updateSubcriticalClock();
         updateRefueling();
         updateAutoControl();
         checkAutomaticStageTransitions();

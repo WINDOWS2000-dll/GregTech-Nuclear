@@ -1204,12 +1204,33 @@ public class ConfigHolder {
         public double refuelingMaxTemperatureKelvin = 366.0;
 
         @Config.Comment({
-                "Refueling start condition (8): minutes (world time) the core must have stayed below the shutdown " +
-                        "level since it last operated -- a decay heat stand-in until stage 2 replaces it with " +
-                        "decay heat <= ~0.3%. A core that has never operated skips it. Lower it to shorten tests.",
-                "Default: 115.0 (the real ~100 hours divided by this mod's 52.2x time compression)" })
-        @Config.RangeDouble(min = 0.0, max = 1.0E6)
-        public double refuelingMinSubcriticalMinutes = 115.0;
+                "Refueling start condition (8): the core's decay heat must be at or below this fraction of the " +
+                        "loaded fuel's nominal power (fuel layers x fuelNodeNominalPowerWatts) -- stage 2-3b, " +
+                        "replacing the stage 1-4c 115-minute wait (real plants wait ~100 h, when decay heat is " +
+                        "~0.3%; on this mod's clocks that is reached ~1.9 h after a long run).",
+                "Default: 0.003" })
+        @Config.RangeDouble(min = 0.0, max = 1.0)
+        public double refuelingMaxDecayHeatFraction = 0.003;
+
+        @Config.Comment({
+                "Nominal thermal power (W) of one fuel node (one 21.5 cm layer of one assembly) -- the power " +
+                        "normalization decided in this mod's discussion point 3 (p-bar = 1.0 MW per fuel node, a " +
+                        "real 4-loop core's 3.4 GW over its ~3300 node-equivalents). Used as the reference for " +
+                        "decay heat fractions (refueling condition (8), console display) because the vessel-sized " +
+                        "rated power (ratedThermalPowerPerInteriorCellWatts, known issue K3) ignores how much fuel " +
+                        "is actually loaded.",
+                "Default: 1.0E6" })
+        @Config.RangeDouble(min = 0.0, max = 1.0E12)
+        public double fuelNodeNominalPowerWatts = 1.0E6;
+
+        @Config.Comment({
+                "Time compression of this mod's slow clock (decision of discussion point 4, s = 52.2, matching the " +
+                        "xenon calibration): decay heat groups with a real half-life of an hour or more decay this " +
+                        "many times faster (their total post-shutdown energy is 1/s of reality); shorter groups " +
+                        "run in real time, so the heat right after a SCRAM is real.",
+                "Default: 52.2" })
+        @Config.RangeDouble(min = 1.0, max = 1.0E6)
+        public double slowClockCompression = 52.2;
 
         @Config.Comment({
                 "DEBUG: log every refused fuel assembly port slot operation (side, slot, item, lock and channel " +

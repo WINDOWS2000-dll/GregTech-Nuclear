@@ -16,10 +16,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RefuelingEvaluatorTest {
 
-    private static final Limits LIMITS = new Limits(1.0e-3, 2000.0, 366.0, 0.102325, 115.0);
+    private static final Limits LIMITS = new Limits(1.0e-3, 2000.0, 366.0, 0.102325, 0.003);
 
     private static Inputs ready() {
-        return new Inputs(true, true, 1.0e-6, 2100.0, 330.0, 0.101325, 200.0, 1000.0, 1000.0);
+        return new Inputs(true, true, 1.0e-6, 2100.0, 330.0, 0.101325, 0.001, 1000.0, 1000.0);
     }
 
     @Test
@@ -33,14 +33,14 @@ class RefuelingEvaluatorTest {
     @Test
     void eachConditionIsChecked() {
         Inputs r = ready();
-        assertUnmet(Condition.SHUTDOWN, new Inputs(false, true, 1e-6, 2100, 330, 0.101325, 200, 1000, 1000));
-        assertUnmet(Condition.RODS_INSERTED, new Inputs(true, false, 1e-6, 2100, 330, 0.101325, 200, 1000, 1000));
-        assertUnmet(Condition.SUBCRITICAL, new Inputs(true, true, 0.01, 2100, 330, 0.101325, 200, 1000, 1000));
-        assertUnmet(Condition.BORON, new Inputs(true, true, 1e-6, 800, 330, 0.101325, 200, 1000, 1000));
-        assertUnmet(Condition.TEMPERATURE, new Inputs(true, true, 1e-6, 2100, 400, 0.101325, 200, 1000, 1000));
-        assertUnmet(Condition.PRESSURE, new Inputs(true, true, 1e-6, 2100, 330, 0.5, 200, 1000, 1000));
-        assertUnmet(Condition.WAIT_TIME, new Inputs(true, true, 1e-6, 2100, 330, 0.101325, 30, 1000, 1000));
-        assertUnmet(Condition.COOLANT, new Inputs(true, true, 1e-6, 2100, 330, 0.101325, 200, 900, 1000));
+        assertUnmet(Condition.SHUTDOWN, new Inputs(false, true, 1e-6, 2100, 330, 0.101325, 0.001, 1000, 1000));
+        assertUnmet(Condition.RODS_INSERTED, new Inputs(true, false, 1e-6, 2100, 330, 0.101325, 0.001, 1000, 1000));
+        assertUnmet(Condition.SUBCRITICAL, new Inputs(true, true, 0.01, 2100, 330, 0.101325, 0.001, 1000, 1000));
+        assertUnmet(Condition.BORON, new Inputs(true, true, 1e-6, 800, 330, 0.101325, 0.001, 1000, 1000));
+        assertUnmet(Condition.TEMPERATURE, new Inputs(true, true, 1e-6, 2100, 400, 0.101325, 0.001, 1000, 1000));
+        assertUnmet(Condition.PRESSURE, new Inputs(true, true, 1e-6, 2100, 330, 0.5, 0.001, 1000, 1000));
+        assertUnmet(Condition.DECAY_HEAT, new Inputs(true, true, 1e-6, 2100, 330, 0.101325, 0.005, 1000, 1000));
+        assertUnmet(Condition.COOLANT, new Inputs(true, true, 1e-6, 2100, 330, 0.101325, 0.001, 900, 1000));
         assertTrue(RefuelingEvaluator.canStart(RefuelingEvaluator.checklist(r, LIMITS)));
     }
 
@@ -51,14 +51,14 @@ class RefuelingEvaluatorTest {
     }
 
     @Test
-    void neverCriticalCoreSkipsTheWait() {
-        Inputs fresh = new Inputs(true, true, 0, 2100, 330, 0.101325, Double.POSITIVE_INFINITY, 1000, 1000);
-        assertEquals(Status.MET, RefuelingEvaluator.checklist(fresh, LIMITS).get(Condition.WAIT_TIME));
+    void freshCoreHasNoDecayHeatToWaitOut() {
+        Inputs fresh = new Inputs(true, true, 0, 2100, 330, 0.101325, 0.0, 1000, 1000);
+        assertEquals(Status.MET, RefuelingEvaluator.checklist(fresh, LIMITS).get(Condition.DECAY_HEAT));
     }
 
     @Test
     void resumeIgnoresTheStageCondition() {
-        Inputs refueling = new Inputs(false, true, 1e-6, 2100, 330, 0.101325, 200, 1000, 1000);
+        Inputs refueling = new Inputs(false, true, 1e-6, 2100, 330, 0.101325, 0.001, 1000, 1000);
         Map<Condition, Status> checklist = RefuelingEvaluator.checklist(refueling, LIMITS);
         assertFalse(RefuelingEvaluator.canStart(checklist));
         assertTrue(RefuelingEvaluator.canResume(checklist));

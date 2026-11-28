@@ -21,7 +21,6 @@ class SevereAccidentProgressionTrackerTest {
         double meltedFuelMassKg = 0.0;
         double coreFuelMassAtMeltdownStartKg = 0.0;
         double totalCoreFuelMassKg = 1000.0;
-        boolean heatSource = true;
 
         @Override
         public double getCoolantMassKg() {
@@ -62,46 +61,29 @@ class SevereAccidentProgressionTrackerTest {
         public double computeTotalCoreFuelMassKg() {
             return totalCoreFuelMassKg;
         }
-
-        @Override
-        public boolean hasCoreHeatSource() {
-            return heatSource;
-        }
     }
 
-    private static FakeAccidentHost locaHost() {
+    @Test
+    void lossOfCoolantAloneDoesNotChangeTheStage() {
+        // O2 (stage 2-3b): a LOCA is a cause, shown as an alarm; the stage only follows the fuel. A cold, drained,
+        // fueled core (or an empty one) therefore stays NORMAL.
         FakeAccidentHost host = new FakeAccidentHost();
         host.coolantMassKg = 0.0;
-        return host;
-    }
-
-    @Test
-    void emptyCoreNeverEscalatesEvenWithLoca() {
-        FakeAccidentHost host = locaHost();
+        host.fuelTemperatureKelvin = 320.0;
+        assertEquals(SevereAccidentStage.NORMAL,
+                new SevereAccidentProgressionTracker().advance(host, SevereAccidentState.normal()).stage);
         host.totalCoreFuelMassKg = 0.0;
-
-        SevereAccidentState next = new SevereAccidentProgressionTracker().advance(host, SevereAccidentState.normal());
-
-        assertEquals(SevereAccidentStage.NORMAL, next.stage);
+        assertEquals(SevereAccidentStage.NORMAL,
+                new SevereAccidentProgressionTracker().advance(host, SevereAccidentState.normal()).stage);
     }
 
     @Test
-    void fueledCoreWithoutHeatSourceNeverEscalatesEvenWithLoca() {
-        FakeAccidentHost host = locaHost();
-        host.heatSource = false;
-
-        SevereAccidentState next = new SevereAccidentProgressionTracker().advance(host, SevereAccidentState.normal());
-
-        assertEquals(SevereAccidentStage.NORMAL, next.stage);
-    }
-
-    @Test
-    void heatGeneratingCoreWithLocaEscalatesToUncontrolledHeating() {
-        FakeAccidentHost host = locaHost();
-
-        SevereAccidentState next = new SevereAccidentProgressionTracker().advance(host, SevereAccidentState.normal());
-
-        assertEquals(SevereAccidentStage.UNCONTROLLED_HEATING, next.stage);
+    void overheatingFuelEscalatesWhateverTheCause() {
+        // E.g. a SCRAMmed core heating on decay heat after losing cooling, with plenty of coolant still present.
+        FakeAccidentHost host = new FakeAccidentHost();
+        host.fuelTemperatureKelvin = SevereAccidentConstants.FUEL_DAMAGE_TEMPERATURE_KELVIN + 10.0;
+        assertEquals(SevereAccidentStage.UNCONTROLLED_HEATING,
+                new SevereAccidentProgressionTracker().advance(host, SevereAccidentState.normal()).stage);
     }
 
     @Test
